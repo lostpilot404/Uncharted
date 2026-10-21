@@ -81,7 +81,12 @@ mod tests {
             ("TITLE_ID", 0x204, title_id.as_bytes()),
             ("USER_DEFINED_PARAM_1", 0x404, param_u32.as_slice()),
         ] {
-            entries.push((keys.len() as u16, fmt, val.len() as u32, values.len() as u32));
+            entries.push((
+                keys.len() as u16,
+                fmt,
+                val.len() as u32,
+                values.len() as u32,
+            ));
             keys.extend_from_slice(key.as_bytes());
             keys.push(0);
             values.extend_from_slice(val);

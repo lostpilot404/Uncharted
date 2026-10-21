@@ -75,10 +75,7 @@ pub fn entry_is_safe(entry: &str) -> bool {
 
 /// Paths under the install folder an update must not overwrite.
 pub fn is_user_file(relative: &str) -> bool {
-    let first = relative
-        .split(['/', '\\'])
-        .next()
-        .unwrap_or_default();
+    let first = relative.split(['/', '\\']).next().unwrap_or_default();
     USER_FILES.contains(&first)
 }
 
@@ -119,7 +116,10 @@ mod tests {
         assert!(tag_is_newer("1.0.0", "0.3.6"));
         assert!(!tag_is_newer("0.3.6", "0.3.6"));
         assert!(!tag_is_newer("0.3.5", "0.3.6"));
-        assert!(tag_is_newer("v0.3.7", "0.3.6"), "leading v is part of a digit run");
+        assert!(
+            tag_is_newer("v0.3.7", "0.3.6"),
+            "leading v is part of a digit run"
+        );
     }
 
     #[test]
@@ -152,12 +152,18 @@ mod tests {
     #[test]
     fn picks_the_zip_asset() {
         let assets = vec![
-            ("uncharted-windows.zip".to_string(), "https://x/zip".to_string()),
+            (
+                "uncharted-windows.zip".to_string(),
+                "https://x/zip".to_string(),
+            ),
             ("Source.code".to_string(), "https://x/src".to_string()),
         ];
         assert_eq!(
             select_zip(&assets),
-            Some(("uncharted-windows.zip".to_string(), "https://x/zip".to_string()))
+            Some((
+                "uncharted-windows.zip".to_string(),
+                "https://x/zip".to_string()
+            ))
         );
         assert_eq!(select_zip(&[]), None);
     }

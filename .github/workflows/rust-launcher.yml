@@ -30,10 +30,13 @@ jobs:
             # Job logs redirect to blob storage; emit each file's diff as one
             # %-escaped annotation so it is readable through the API.
             printf '%s' "$out" | sed $'s/\x1b\\[[0-9;]*m//g' | \
-              awk 'BEGIN{RS="\nDiff in "; ORS=""} NR<=30 {
+              awk 'BEGIN{RS="\nDiff in "; ORS=""}
+                   {
                      line = (NR==1 ? $0 : "Diff in " $0)
                      gsub(/%/, "%25", line); gsub(/\r/, "%0D", line); gsub(/\n/, "%0A", line)
-                     print "::error title=rustfmt::" line "\n"
+                     # 10 of each level: some ceiling at 10 annotations per type per step.
+                     lvl = (NR<=10 ? "error" : (NR<=20 ? "notice" : "warning"))
+                     print "::" lvl " title=rustfmt::" line "\n"
                    }'
             exit 1
           fi

@@ -184,9 +184,7 @@ impl LauncherApp {
                             _ => {}
                         }
                         self.save();
-                        let _ = self
-                            .job_tx
-                            .send(WorkerJob::Discover(self.settings.clone()));
+                        let _ = self.job_tx.send(WorkerJob::Discover(self.settings.clone()));
                     }
                     ctx.request_repaint();
                 }

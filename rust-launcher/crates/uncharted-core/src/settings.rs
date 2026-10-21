@@ -118,22 +118,46 @@ impl Settings {
             out.push("Set the game folder (the one with eboot.bin) on the Game page.".into());
         }
         if !["u1", "u2", "u3"].contains(&self.start.as_str()) {
-            out.push(format!("Unknown game '{}': pick Uncharted 1, 2 or 3.", self.start));
+            out.push(format!(
+                "Unknown game '{}': pick Uncharted 1, 2 or 3.",
+                self.start
+            ));
         }
-        if self.mouse_sensitivity.parse::<f32>().map_or(true, |v| v < 0.1 || v > 10.0) {
+        if self
+            .mouse_sensitivity
+            .parse::<f32>()
+            .map_or(true, |v| v < 0.1 || v > 10.0)
+        {
             out.push("Mouse sensitivity must be between 0.1 and 10.".into());
         }
         for (name, value, allowed) in [
             // The option lists mirror PRESENT_MODES and FRAME_RATES in the Python launcher.
-            ("Presentation", &self.present_mode,
-             ["Fifo", "FifoRelaxed", "Mailbox", "Immediate"].as_slice()),
-            ("Frame rate", &self.frame_rate, ["60", "120", "144", "165", "240"].as_slice()),
-            ("Anti-aliasing", &self.anti_aliasing,
-             ["off", "taa", "fsr3", "fsr4", "fsr411", "dlss"].as_slice()),
-            ("Frame generation", &self.frame_generation, ["off", "fsr3", "dlss"].as_slice()),
+            (
+                "Presentation",
+                &self.present_mode,
+                ["Fifo", "FifoRelaxed", "Mailbox", "Immediate"].as_slice(),
+            ),
+            (
+                "Frame rate",
+                &self.frame_rate,
+                ["60", "120", "144", "165", "240"].as_slice(),
+            ),
+            (
+                "Anti-aliasing",
+                &self.anti_aliasing,
+                ["off", "taa", "fsr3", "fsr4", "fsr411", "dlss"].as_slice(),
+            ),
+            (
+                "Frame generation",
+                &self.frame_generation,
+                ["off", "fsr3", "dlss"].as_slice(),
+            ),
         ] {
             if !allowed.contains(&value.as_str()) {
-                out.push(format!("{name} value '{value}' is not one of: {}", allowed.join(", ")));
+                out.push(format!(
+                    "{name} value '{value}' is not one of: {}",
+                    allowed.join(", ")
+                ));
             }
         }
         out
@@ -181,7 +205,10 @@ mod tests {
         let s = Settings::from_json(text).unwrap();
         assert_eq!(s.start, "u2");
         let saved = s.to_json();
-        assert!(saved.contains("future_setting"), "unknown key dropped: {saved}");
+        assert!(
+            saved.contains("future_setting"),
+            "unknown key dropped: {saved}"
+        );
     }
 
     #[test]
@@ -208,7 +235,10 @@ mod tests {
     fn problems_are_actionable() {
         let s = Settings::default();
         let problems = s.problems();
-        assert!(problems.iter().any(|p| p.contains("game folder")), "{problems:?}");
+        assert!(
+            problems.iter().any(|p| p.contains("game folder")),
+            "{problems:?}"
+        );
         let mut ok = Settings::default();
         ok.game_dir = "C:/games/uncharted".into();
         assert!(ok.problems().is_empty(), "{:?}", ok.problems());
