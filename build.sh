@@ -102,4 +102,11 @@ if [[ ${1:-} == --test ]]; then
     out/sema-test
     "$CC" -std=c11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -I. -Isrc tests/test_content.c src/runtime_content.c -o out/content-test
     out/content-test
+    # Coroutine frame lifetime (liverpool.cpp nested indirect buffers): the host-heap leak
+    # regression. C++20; runs where a host compiler exists (MSYS2 CLANG64 has clang++).
+    cxx=${CXX:-$(command -v clang++ || command -v g++ || command -v c++ || true)}
+    if [[ -n $cxx ]]; then
+        "$cxx" -std=c++20 -O0 -g -Wall -Wextra -Werror tests/test_coroutine_frames.cpp -o out/coroutine-frames-test
+        out/coroutine-frames-test
+    fi
 fi
