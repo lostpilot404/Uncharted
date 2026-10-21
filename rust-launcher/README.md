@@ -5,10 +5,13 @@ independent of the runtime fixes (workstream 1 is in `gpu/` and `tests/`). It re
 **existing on-disk and process contracts** of `launcher/uncharted_launcher.py` so the two
 launchers can coexist and be compared.
 
-> **Status honesty:** this prototype is **source-complete but not compiled in the audit
-> environment** (no Rust toolchain is reachable from the sandbox: `static.rust-lang.org` is
-> blocked and no GitHub/pypi/npm channel ships a toolchain). `cargo build`, `cargo test` and
-> the benchmark table below are **required Win11 steps**, not completed results.
+> **Status honesty:** the workspace **compiles and tests green on real Windows** (GitHub
+> `windows-latest`, `cargo fmt --check` + `cargo test` + `cargo build --release`; see the
+> Rust launcher CI run for the tip commit — the release `uncharted-launcher.exe` is uploaded
+> as a CI artifact). What is still unverified is **runtime/UI behavior on a Windows desktop**
+> (the CI runner is headless): cold start, idle RAM, high-DPI rendering, dialogs, and the
+> feature-parity checklist below need the manual Win11 pass before this replaces the Python
+> launcher. The benchmark table is a protocol, not results.
 
 ## Build and test (Windows 11)
 
