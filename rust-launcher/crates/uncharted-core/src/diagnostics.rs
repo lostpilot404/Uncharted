@@ -59,11 +59,14 @@ mod tests {
 
     #[test]
     fn redacts_profile_path_anywhere() {
-        let log = "loaded C:\\Users\\Алиса\\Uncharted\\user\\save.dat from C:\\Users\\Алиса\\x";
+        // The name appears both as the player label and inside the profile path: the
+        // path is redacted first (consuming the embedded copy), the label becomes
+        // [player].
+        let log = "Player Алиса loaded C:\\Users\\Алиса\\Uncharted\\user\\save.dat";
         let out = redact(log, "C:\\Users\\Алиса", "Алиса");
         assert!(!out.contains("Алиса"), "{out}");
         assert!(out.contains("%USERPROFILE%"));
-        assert!(out.contains("[player]"));
+        assert!(out.contains("Player [player] loaded"), "{out}");
     }
 
     #[test]
