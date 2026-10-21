@@ -8,7 +8,7 @@
 //! and it records what a stronger policy would require.
 
 use std::collections::BTreeSet;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 /// Never copied over an installation by an update (same list as USER_FILES in
 /// launcher/uncharted_launcher.py).
@@ -60,7 +60,9 @@ pub fn tag_is_newer(candidate: &str, current: &str) -> bool {
 }
 
 /// An archive entry is safe to extract when it stays inside the target directory:
-/// no absolute paths, no `..` components, no drive prefixes (C:), no UNC names.
+/// no absolute paths, no `..` segments, no drive prefixes (C:), no UNC names.
+/// Segment checks are explicit on both separators: zip entries carry their own
+/// separators and the host OS must not change the verdict.
 pub fn entry_is_safe(entry: &str) -> bool {
     if entry.is_empty() || entry.starts_with('/') || entry.starts_with('\\') {
         return false;
@@ -68,11 +70,7 @@ pub fn entry_is_safe(entry: &str) -> bool {
     if entry.contains(':') {
         return false; // "C:evil" or NTFS alternate data streams
     }
-    let path = Path::new(entry);
-    path.components().all(|c| match c {
-        Component::Normal(_) | Component::CurDir => true,
-        Component::ParentDir | Component::RootDir | Component::Prefix(_) => false,
-    })
+    !entry.split(['/', '\\']).any(|segment| segment == "..")
 }
 
 /// Paths under the install folder an update must not overwrite.

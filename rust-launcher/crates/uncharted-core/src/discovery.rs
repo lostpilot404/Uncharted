@@ -53,7 +53,9 @@ impl GameInfo {
     }
 }
 
-/// Where each game would be started from and whether its executable exists there.
+/// Where each game would be started from and whether it is launchable there.
+/// Mirrors `game_available()`: the canonical executable, or eboot.bin in a per-game
+/// folder (a game dumped on its own may ship its elf as eboot.bin).
 #[derive(Debug, Clone, PartialEq)]
 pub struct GameStatus {
     pub key: String,
@@ -62,25 +64,42 @@ pub struct GameStatus {
     pub executable_present: bool,
 }
 
+pub fn game_available(settings: &Settings, key: &str) -> bool {
+    let folder = settings.game_dir_for(key);
+    if folder.trim().is_empty() {
+        return false;
+    }
+    let exe = GAMES.iter().find(|(k, _, _)| *k == key).map(|(_, _, e)| *e);
+    let folder = Path::new(folder);
+    let own = match key {
+        "u1" => &settings.game_dir_u1,
+        "u2" => &settings.game_dir_u2,
+        _ => &settings.game_dir_u3,
+    };
+    let own_set = !own.trim().is_empty();
+    match exe {
+        Some(exe) => {
+            folder.join(exe).is_file() || (own_set && folder.join("eboot.bin").is_file())
+        }
+        None => false,
+    }
+}
+
 pub fn game_statuses(settings: &Settings) -> Vec<GameStatus> {
     GAMES
         .iter()
-        .map(|(key, title, exe)| {
+        .map(|(key, title, _exe)| {
             let folder = settings.game_dir_for(key);
             let folder = if folder.trim().is_empty() {
                 None
             } else {
                 Some(folder.to_string())
             };
-            let executable_present = folder
-                .as_deref()
-                .map(|f| Path::new(f).join(exe).is_file())
-                .unwrap_or(false);
             GameStatus {
                 key: (*key).into(),
                 title: (*title).into(),
                 folder,
-                executable_present,
+                executable_present: game_available(settings, key),
             }
         })
         .collect()
@@ -120,5 +139,22 @@ mod tests {
         assert_eq!(status[0].folder.as_deref(), Some("X:/collection"));
         assert_eq!(status[1].folder.as_deref(), Some("X:/u2"));
         assert!(!status[0].executable_present);
+    }
+
+    #[test]
+    fn per_game_dump_as_eboot_bin_counts_as_available() {
+        // game_available(): "a game dumped on its own may have it as eboot.bin" — for any
+        // game key, when that key has a folder of its own (the Python launcher's rule).
+        let dir = std::env::temp_dir().join("uncharted-core-test-eboot-fallback");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("eboot.bin"), b"stub").unwrap();
+        let mut s = Settings::default();
+        s.game_dir_u2 = dir.to_string_lossy().into_owned();
+        assert!(game_available(&s, "u2"), "eboot.bin in a per-game folder must count");
+        assert!(!game_available(&s, "u3"), "u3 has no folder of its own here");
+        let mut own = Settings::default();
+        own.game_dir_u3 = dir.to_string_lossy().into_owned();
+        assert!(game_available(&own, "u3"),
+                "the source accepts eboot.bin for any key with its own folder");
     }
 }

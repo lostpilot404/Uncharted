@@ -61,20 +61,26 @@ before replacing the shipping launcher.**
 |---|---|---|
 | U1/U2/U3 selection cards | implemented | `app.rs` page_play |
 | Game folder detection + validation (param.sfo TITLE/TITLE_ID/APP_VER) | implemented | `discovery.rs`, `sfo.rs` |
+| `game_available()` rule (canonical exe **or** `eboot.bin` in a per-game folder) | implemented | `discovery.rs::game_available` |
 | Per-game folders (BB_GAME_DIR_U1/U2/U3), user/saves folder | implemented | `settings.rs`, `page_game` |
-| Play with actionable error states | implemented (spawn + exit codes) | `app.rs::play` |
-| Graphics settings the runtime supports (present/framerate/scaler/sharpening/AA/FG) | implemented (same value lists) | `page_display` |
+| Play with actionable error states (gates mirror `play()`: problems + game_available) | implemented (spawn + exit codes) | `app.rs::play` |
+| Graphics settings with the **source's exact option lists** (PRESENT_MODES incl. FifoRelaxed; FRAME_RATES 60/120/144/165/240; WINDOW_SIZES; SCALERS; SHARPENING off/1000/500/250/0; ANTI_ALIASING + fsr411; AA_SHARPNESS 0/0.2/0.4/0.7; FRAME_GENERATION; multipliers) | implemented | `page_display` |
 | VRAM-aware guidance (< 6 GB), never auto-changing settings | implemented | `vram.rs`, page_display/page_diagnostics |
-| Settings persistence in `%APPDATA%\uncharted-launcher\settings.json` (same schema; unknown keys preserved) | implemented | `settings.rs` |
-| input.ini generation (exact actions/defaults of BUTTON_ACTIONS/STICK_ACTIONS) | implemented | `launch.rs` |
-| BB_* launch environment (exact contract of game_environment()) | implemented | `launch.rs` |
+| Settings persistence in `%APPDATA%\uncharted-launcher\settings.json` (same schema and key order; UTF-8 BOM tolerated like `utf-8-sig`; unknown keys preserved) | implemented | `settings.rs` |
+| `show_fps` mirrored into bbport.ini (`set_ini`, `BB_CONFIG` override honored) | implemented | `launch.rs::set_ini`, `app.rs::save` |
+| input.ini generation (exact BUTTON_ACTIONS/STICK_ACTIONS actions and defaults; `mouse_sensitivity` `:.2f` clamp) | implemented | `launch.rs` |
+| BB_* launch environment (exact contract of `game_environment()` incl. PYTHONUNBUFFERED/PYTHONIOENCODING/PYTHONUTF8) | implemented | `launch.rs` |
+| Game output captured to `<user_dir or data>/user/last_run.log` + live tail (`read_output`) | implemented | `app.rs::spawn_log_pump` |
+| `close_on_play` (close launcher 5 s after the game starts) | implemented | `app.rs::update` |
 | Paths with spaces/Unicode; explicit args, never shell strings | implemented | `launch.rs`, `app.rs` |
-| Update check/install (GitHub release zip, USER_FILES preserved, path-traversal-safe) | planning + safety rules implemented; download/install execution **deferred** (needs Win11 test of the existing `--install-update` flow) | `update.rs` |
+| Update check/install (GitHub release zip, USER_FILES preserved, `version_tuple` digit-run ordering, path-traversal-safe) | planning + safety rules implemented; download/install execution **deferred** (needs Win11 test of the existing `--install-update` flow) | `update.rs` |
 | Log tail + redacted diagnostics export | implemented | `diagnostics.rs`, page_diagnostics |
 | Keyboard-accessible navigation | partial (egui tab order); screen-reader/a11y **deferred** |
 | Translations (ru) | **deferred** (English only, matching `_()` identity stub of the current launcher) |
 | Controls remapping UI | **deferred** (bindings written with correct defaults; UI editors not ported) |
-| Steam shortcuts, FSR4 asset downloader, covers/art | **deferred** (unchanged Python launcher remains the shipping UI) |
+| Steam shortcuts, FSR4 asset downloader, covers/art, in-game language list UI | **deferred** (unchanged Python launcher remains the shipping UI) |
+
+Deliberate difference: a failed `input.ini` write **stops the launch with a visible error** (the Python launcher launches anyway without `BB_INPUT_CONFIG`) — the prototype favors actionable failure states over silent degradation.
 
 ## Safety notes
 

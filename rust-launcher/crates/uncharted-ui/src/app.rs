@@ -4,10 +4,10 @@
 use crate::theme::{self, CARD, ERROR, GOLD, GOLD_HI, MUTED, TEXT, WARN};
 use eframe::egui;
 use std::path::PathBuf;
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
-use uncharted_core::discovery::{game_statuses, GameInfo, GameStatus};
-use uncharted_core::launch::{game_environment, input_ini, launch_command};
+use uncharted_core::discovery::{game_available, game_statuses, GameInfo, GameStatus};
+use uncharted_core::launch::{game_environment, input_ini, launch_command, set_ini};
 use uncharted_core::settings::Settings;
 use uncharted_core::vram::{low_vram_warning, RECOMMENDED_VRAM_MB};
 
@@ -16,6 +16,7 @@ enum WorkerMsg {
     Gpu(Option<u64>),
     Discovery(Option<GameInfo>, Vec<GameStatus>),
     Log(String),
+    GameOutput(String),
     ChosenFolder(Option<PathBuf>, &'static str),
     Report(String),
 }
@@ -43,8 +44,10 @@ pub struct LauncherApp {
     play_state: PlayState,
     child: Option<Child>,
     job_tx: Sender<WorkerJob>,
+    msg_tx: Sender<WorkerMsg>,
     msg_rx: Receiver<WorkerMsg>,
     last_report: String,
+    close_at: Option<std::time::Instant>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -66,7 +69,7 @@ impl LauncherApp {
         theme::apply(&cc.egui_ctx);
         let data_dir = data_dir();
         let settings = load_settings(&data_dir);
-        let (job_tx, msg_rx) = spawn_worker();
+        let (job_tx, msg_tx, msg_rx) = spawn_worker();
         let app = Self {
             settings,
             data_dir,
@@ -81,8 +84,10 @@ impl LauncherApp {
             play_state: PlayState::Idle,
             child: None,
             job_tx,
+            msg_tx,
             msg_rx,
             last_report: String::new(),
+            close_at: None,
         };
         let _ = app.job_tx.send(WorkerJob::ProbeGpu(app.port_dir()));
         let _ = app.job_tx.send(WorkerJob::Discover(app.settings.clone()));
@@ -111,6 +116,26 @@ impl LauncherApp {
             }
             Err(e) => self.set_status(&format!("Could not save settings: {e}"), true),
         }
+        // collect() in the Python launcher also mirrors show_fps into bbport.ini.
+        let ini = ini_path(&self.data_dir);
+        if let Err(e) = set_ini(
+            &ini,
+            "show_fps",
+            if self.settings.show_fps { "1" } else { "0" },
+        ) {
+            self.set_status(&format!("Could not update {}: {e}", ini.display()), true);
+        }
+    }
+
+    /// Where the game's output log lives: the saves folder when set, else <data>/user
+    /// (read_output() in the Python launcher).
+    fn log_path(&self) -> PathBuf {
+        let dir = if self.settings.user_dir.trim().is_empty() {
+            self.data_dir.join("user")
+        } else {
+            PathBuf::from(self.settings.user_dir.trim())
+        };
+        dir.join("last_run.log")
     }
 
     fn set_status(&mut self, text: &str, error: bool) {
@@ -136,6 +161,15 @@ impl LauncherApp {
                 }
                 WorkerMsg::Log(text) => {
                     self.log_tail = text;
+                    ctx.request_repaint();
+                }
+                WorkerMsg::GameOutput(chunk) => {
+                    // Live game output, kept to the same ~24 KiB the log viewer shows.
+                    self.log_tail.push_str(&chunk);
+                    let len = self.log_tail.len();
+                    if len > 24 * 1024 {
+                        self.log_tail.drain(..len - 24 * 1024);
+                    }
                     ctx.request_repaint();
                 }
                 WorkerMsg::ChosenFolder(path, field) => {
@@ -188,9 +222,15 @@ impl LauncherApp {
         if self.play_state == PlayState::Running {
             return;
         }
+        // play() gates: settings must be sane and the chosen game must be in its folder
+        // (game_available — a per-game dump may carry its elf as eboot.bin).
         let problems = self.settings.problems();
         if let Some(first) = problems.first() {
             self.set_status(first, true);
+            return;
+        }
+        if !game_available(&self.settings, &self.settings.start) {
+            self.set_status("This game is not in the chosen folder.", true);
             return;
         }
         self.save();
@@ -207,20 +247,34 @@ impl LauncherApp {
         for (key, value) in env {
             command.env(key, value);
         }
+        // Popen(..., stdin=DEVNULL, stdout=PIPE, stderr=STDOUT, cwd=PORT_DIR) in the
+        // Python launcher; both pipes feed the log (stderr read on its own thread).
+        command.current_dir(self.port_dir());
+        command.stdin(Stdio::null());
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::piped());
         match command.spawn() {
-            Ok(child) => {
+            Ok(mut child) => {
+                let log_path = self.log_path();
+                if let Some(parent) = log_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if let Some(out) = child.stdout.take() {
+                    spawn_log_pump(out, log_path.clone(), self.msg_tx.clone());
+                }
+                if let Some(err) = child.stderr.take() {
+                    spawn_log_pump(err, log_path, self.msg_tx.clone());
+                }
                 self.child = Some(child);
                 self.play_state = PlayState::Running;
-                self.set_status(
-                    &format!("Playing Uncharted {}…", self.settings.start.to_uppercase()),
-                    false,
-                );
+                self.log_tail.clear();
+                self.set_status("Preparing the game; it opens in its own window…", false);
+                if self.settings.close_on_play {
+                    self.close_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+                }
             }
             Err(e) => {
-                self.set_status(
-                    &format!("Could not start {}: {e}", program.display()),
-                    true,
-                );
+                self.set_status(&format!("Could not start {}: {e}", program.display()), true);
             }
         }
     }
@@ -230,6 +284,13 @@ impl eframe::App for LauncherApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_worker(ctx);
         self.poll_game();
+        // close_on_play: the Python launcher closes itself five seconds after the game starts.
+        if let Some(at) = self.close_at {
+            if std::time::Instant::now() >= at {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                self.close_at = None;
+            }
+        }
 
         egui::TopBottomPanel::top("title").show(ctx, |ui| {
             ui.add_space(10.0);
@@ -291,9 +352,7 @@ impl eframe::App for LauncherApp {
                     if ui.add(button).clicked() {
                         self.page = page;
                         if page == Page::Diagnostics {
-                            let _ = self
-                                .job_tx
-                                .send(WorkerJob::ReadLog(self.data_dir.join("last_run.log")));
+                            let _ = self.job_tx.send(WorkerJob::ReadLog(self.log_path()));
                         }
                     }
                 }
@@ -361,7 +420,8 @@ impl LauncherApp {
         ui.label(egui::RichText::new(ready).color(MUTED).size(13.0));
         ui.add_space(10.0);
 
-        let playable = self.game_info.is_some() && self.play_state == PlayState::Idle;
+        let playable = self.play_state == PlayState::Idle
+            && game_available(&self.settings, &self.settings.start);
         let play = egui::Button::new(
             egui::RichText::new(if self.play_state == PlayState::Running {
                 "Playing…"
@@ -439,12 +499,15 @@ impl LauncherApp {
         ui.add_space(4.0);
         let mut changed = false;
         for (label, field, options) in [
-            ("Presentation", "present_mode", ["Fifo", "Mailbox", "Immediate"].as_slice()),
-            ("Frame rate", "frame_rate", ["30", "60", "120", "240"].as_slice()),
+            ("Presentation", "present_mode",
+             ["Fifo", "FifoRelaxed", "Mailbox", "Immediate"].as_slice()),
+            ("Frame rate", "frame_rate", ["60", "120", "144", "165", "240"].as_slice()),
             ("Window size", "window_size", ["1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"].as_slice()),
             ("Upscaling", "scaler", ["fsr1", "bilinear"].as_slice()),
-            ("Sharpening", "sharpening", ["off", "250", "500", "750"].as_slice()),
-            ("Anti-aliasing", "anti_aliasing", ["off", "taa", "fsr3", "fsr4", "fsr411", "dlss"].as_slice()),
+            ("Sharpening", "sharpening", ["off", "1000", "500", "250", "0"].as_slice()),
+            ("Anti-aliasing", "anti_aliasing",
+             ["off", "taa", "fsr3", "fsr4", "fsr411", "dlss"].as_slice()),
+            ("AA sharpness", "aa_sharpness", ["0", "0.2", "0.4", "0.7"].as_slice()),
             ("Frame generation", "frame_generation", ["off", "fsr3", "dlss"].as_slice()),
             ("Frame-gen multiplier", "frame_gen_multiplier", ["2", "3", "4"].as_slice()),
         ] {
@@ -455,6 +518,7 @@ impl LauncherApp {
                 "scaler" => &mut self.settings.scaler,
                 "sharpening" => &mut self.settings.sharpening,
                 "anti_aliasing" => &mut self.settings.anti_aliasing,
+                "aa_sharpness" => &mut self.settings.aa_sharpness,
                 "frame_generation" => &mut self.settings.frame_generation,
                 _ => &mut self.settings.frame_gen_multiplier,
             };
@@ -558,9 +622,10 @@ fn load_settings(data_dir: &std::path::Path) -> Settings {
         .unwrap_or_default()
 }
 
-fn spawn_worker() -> (Sender<WorkerJob>, Receiver<WorkerMsg>) {
+fn spawn_worker() -> (Sender<WorkerJob>, Sender<WorkerMsg>, Receiver<WorkerMsg>) {
     let (job_tx, job_rx) = mpsc::channel::<WorkerJob>();
     let (msg_tx, msg_rx) = mpsc::channel::<WorkerMsg>();
+    let worker_tx = msg_tx.clone();
     std::thread::spawn(move || {
         while let Ok(job) = job_rx.recv() {
             match job {
@@ -612,8 +677,14 @@ fn spawn_worker() -> (Sender<WorkerJob>, Receiver<WorkerMsg>) {
                 WorkerJob::BuildReport(settings, vram) => {
                     let gpu = vram.map(|v| format!("{v} MiB of video memory")).unwrap_or_default();
                     let user_profile = std::env::var("USERPROFILE").unwrap_or_default();
-                    let log_tail =
-                        std::fs::read_to_string(data_dir().join("last_run.log")).unwrap_or_default();
+                    // The log lives in the saves folder when set, else <data>/user.
+                    let log_dir = if settings.user_dir.trim().is_empty() {
+                        data_dir().join("user")
+                    } else {
+                        std::path::PathBuf::from(settings.user_dir.trim())
+                    };
+                    let log_tail = std::fs::read_to_string(log_dir.join("last_run.log"))
+                        .unwrap_or_default();
                     let report = uncharted_core::diagnostics::report(
                         env!("CARGO_PKG_VERSION"),
                         &settings.to_json(),
@@ -627,5 +698,36 @@ fn spawn_worker() -> (Sender<WorkerJob>, Receiver<WorkerMsg>) {
             }
         }
     });
-    (job_tx, msg_rx)
+    (job_tx, worker_tx, msg_rx)
+}
+
+/// One pipe of the game process to the log file and the UI (read_output() in spirit:
+/// every byte reaches last_run.log; the UI keeps a bounded tail).
+fn spawn_log_pump(
+    pipe: impl std::io::Read + Send + 'static,
+    log_path: PathBuf,
+    tx: Sender<WorkerMsg>,
+) {
+    std::thread::spawn(move || {
+        use std::io::Read;
+        let mut pipe = pipe;
+        let mut buffer = [0u8; 4096];
+        loop {
+            match pipe.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if let Ok(mut file) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&log_path)
+                    {
+                        use std::io::Write;
+                        let _ = file.write_all(&buffer[..n]);
+                    }
+                    let chunk = String::from_utf8_lossy(&buffer[..n]).into_owned();
+                    let _ = tx.send(WorkerMsg::GameOutput(chunk));
+                }
+            }
+        }
+    });
 }

@@ -145,7 +145,46 @@ pub fn game_environment(
     for (key, value) in extra {
         env.insert(key.clone(), value.clone());
     }
+    // game_environment() in the Python launcher always sets these so the run.py pipes
+    // never fall back to the ANSI code page (GBK consoles).
+    env.insert("PYTHONUNBUFFERED".into(), "1".into());
+    env.insert("PYTHONIOENCODING".into(), "utf-8".into());
+    env.insert("PYTHONUTF8".into(), "1".into());
     env
+}
+
+/// bbport.ini location: BB_CONFIG override, else <data_dir>/bbport.ini (ini_path()).
+pub fn ini_path(data_dir: &Path) -> PathBuf {
+    match std::env::var("BB_CONFIG") {
+        Ok(value) if !value.trim().is_empty() => PathBuf::from(value),
+        _ => data_dir.join("bbport.ini"),
+    }
+}
+
+/// Rewrite one key in bbport.ini in place, appending it when absent (set_ini()).
+/// bbport.ini is read by the game; the in-game menu edits it too — preserve every
+/// other line exactly.
+pub fn set_ini(path: &Path, key: &str, value: &str) -> std::io::Result<()> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let mut out: Vec<String> = Vec::new();
+    let mut found = false;
+    for line in text.lines() {
+        let is_target = line.contains('=')
+            && !line.trim_start().starts_with('#')
+            && line.split_once('=').map(|(k, _)| k.trim()) == Some(key);
+        if is_target {
+            out.push(format!("{key}={value}"));
+            found = true;
+        } else {
+            out.push(line.to_string());
+        }
+    }
+    if !found {
+        out.push(format!("{key}={value}"));
+    }
+    let mut body = out.join("\n");
+    body.push('\n');
+    std::fs::write(path, body)
 }
 
 /// The game process to start: packaged `Uncharted.exe --run` next to the launcher, or a
@@ -205,6 +244,10 @@ mod tests {
         assert_eq!(env["BB_RCAS"], "1");
         assert_eq!(env["BB_RCAS_ATTENUATION"], "500");
         assert_eq!(env["BB_INPUT_CONFIG"], "C:\\cfg\\input.ini");
+        // The Python launcher always sets these for the run.py pipes.
+        assert_eq!(env["PYTHONUNBUFFERED"], "1");
+        assert_eq!(env["PYTHONIOENCODING"], "utf-8");
+        assert_eq!(env["PYTHONUTF8"], "1");
     }
 
     #[test]
@@ -224,5 +267,32 @@ mod tests {
         assert_eq!(args.len(), 1);
         assert!(args[0].ends_with("run.py"));
         assert!(program.to_string_lossy().contains("python"));
+    }
+
+    #[test]
+    fn set_ini_rewrites_only_the_target_key() {
+        let dir = std::env::temp_dir().join("uncharted-core-test-ini");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bbport.ini");
+        std::fs::write(&path, "# comment\nlive_resolution=auto\nshow_fps=0\nempty=\n").unwrap();
+        set_ini(&path, "show_fps", "1").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("live_resolution=auto"));
+        assert!(text.contains("show_fps=1"));
+        assert!(!text.contains("show_fps=0"));
+        assert!(text.contains("# comment"));
+    }
+
+    #[test]
+    fn set_ini_appends_and_creates() {
+        let dir = std::env::temp_dir().join("uncharted-core-test-ini2");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bbport.ini");
+        std::fs::write(&path, "a=1\n").unwrap();
+        set_ini(&path, "show_fps", "0").unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().ends_with("show_fps=0\n"));
+        std::fs::remove_file(&path).unwrap();
+        set_ini(&path, "show_fps", "1").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "show_fps=1\n");
     }
 }

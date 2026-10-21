@@ -94,7 +94,9 @@ impl Default for Settings {
 impl Settings {
     /// Parse settings.json. An empty or unreadable file yields defaults (same as the
     /// Python launcher's `load_json(CONFIG_FILE, {})` merge over APP_DEFAULTS).
+    /// The Python launcher reads with utf-8-sig: a UTF-8 BOM must not fail the parse.
     pub fn from_json(text: &str) -> Result<Self, String> {
+        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
         if text.trim().is_empty() {
             return Ok(Self::default());
         }
@@ -122,8 +124,10 @@ impl Settings {
             out.push("Mouse sensitivity must be between 0.1 and 10.".into());
         }
         for (name, value, allowed) in [
-            ("Presentation", &self.present_mode, ["Fifo", "Mailbox", "Immediate"].as_slice()),
-            ("Frame rate", &self.frame_rate, ["30", "60", "120", "240"].as_slice()),
+            // The option lists mirror PRESENT_MODES and FRAME_RATES in the Python launcher.
+            ("Presentation", &self.present_mode,
+             ["Fifo", "FifoRelaxed", "Mailbox", "Immediate"].as_slice()),
+            ("Frame rate", &self.frame_rate, ["60", "120", "144", "165", "240"].as_slice()),
             ("Anti-aliasing", &self.anti_aliasing,
              ["off", "taa", "fsr3", "fsr4", "fsr411", "dlss"].as_slice()),
             ("Frame generation", &self.frame_generation, ["off", "fsr3", "dlss"].as_slice()),
@@ -183,6 +187,12 @@ mod tests {
     #[test]
     fn empty_file_gives_defaults() {
         assert_eq!(Settings::from_json("  ").unwrap(), Settings::default());
+    }
+
+    #[test]
+    fn utf8_bom_is_tolerated_like_utf_8_sig() {
+        let text = "\u{feff}{\"start\": \"u3\"}";
+        assert_eq!(Settings::from_json(text).unwrap().start, "u3");
     }
 
     #[test]
