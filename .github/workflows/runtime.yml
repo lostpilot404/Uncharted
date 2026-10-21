@@ -60,7 +60,7 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$out" | tail -5
-      - name: Standalone tests (same commands as the Linux-only build.sh --test block)
+      - name: Standalone tests (portable subset of the Linux-only build.sh --test block)
         shell: msys2 {0}
         run: |
           set -e
@@ -76,8 +76,9 @@ jobs:
             fi
             printf '%s\n' "$out" | tail -2
           }
-          try compile-file-mods clang -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_file_mods.c -o out/file-mods-test
-          try file-mods out/file-mods-test
+          # tests/test_file_mods.c is POSIX-only by construction (its fixture uses /tmp,
+          # mkdtemp and symlink) and stays on the Linux/Nix build.sh --test path.
+          echo "::notice title=standalone-test::test_file_mods skipped: POSIX fixture (Linux/Nix only)"
           try compile-content clang -std=c11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -I. -Isrc tests/test_content.c src/runtime_content.c -o out/content-test
           try content out/content-test
           try compile-coroutine-frames clang++ -std=c++20 -O0 -g -Wall -Wextra -Werror tests/test_coroutine_frames.cpp -o out/coroutine-frames-test
