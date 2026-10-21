@@ -13,7 +13,6 @@
 // Build/run (any C++20 compiler):
 //   g++ -std=c++20 -O0 -g tests/test_coroutine_frames.cpp -o out/coroutine-frames-test
 //   out/coroutine-frames-test
-#include <cassert>
 #include <coroutine>
 #include <cstddef>
 #include <cstdint>
@@ -116,6 +115,14 @@ static void DriveToDone(Task::Handle handle) {
 }
 
 int main() {
+    // Explicit checks, not assert(): the verdict must not depend on NDEBUG.
+    const auto check = [](bool ok, const char* what) {
+        if (!ok) {
+            std::printf("FAIL: %s\n", what);
+            std::exit(1);
+        }
+    };
+
     // Warm up: first-touch allocations inside the standard library that are not the loop's.
     {
         auto warm = ProcessLoop(1, true);
@@ -125,11 +132,13 @@ int main() {
     const std::size_t base_live = live_allocations;
 
     // 1. Reproduce the defect: nested frames kept after done() accumulate one per task.
+    //    If a compiler/runtime freed them anyway, this measurement would fail.
     {
         auto leaky = ProcessLoop(50, false);
         DriveToDone(leaky.handle);
         leaky.handle.destroy();
-        assert(live_allocations >= base_live + 50);
+        check(live_allocations >= base_live + 50,
+              "undestroyed nested frames must stay allocated (leak reproduction)");
         std::printf("leak reproduced: %zu live allocations after 50 undestroyed nested frames\n",
                     live_allocations - base_live);
     }
@@ -143,7 +152,7 @@ int main() {
         auto fixed = ProcessLoop(50, true);
         DriveToDone(fixed.handle);
         fixed.handle.destroy();
-        assert(live_allocations == before);
+        check(live_allocations == before, "destroy-after-done must free every nested frame");
         std::printf("fixed pattern: no net allocations after 50 destroyed nested frames\n");
     }
 
@@ -155,7 +164,7 @@ int main() {
             DriveToDone(t.handle);
             t.handle.destroy();
         }
-        assert(live_allocations == before);
+        check(live_allocations == before, "repeated runs must not accumulate frames");
         std::printf("repeat driver runs: live allocations unchanged\n");
     }
     std::printf("PASS: coroutine frame lifetime contract (destroy nested frames after done())\n");
