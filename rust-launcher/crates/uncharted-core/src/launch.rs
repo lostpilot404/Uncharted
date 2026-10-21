@@ -10,7 +10,11 @@ use std::path::{Path, PathBuf};
 
 /// The input.ini lines for the Controls page. Mirrors `write_input_ini()`.
 pub fn input_ini(settings: &Settings) -> String {
-    let sensitivity: f32 = settings.mouse_sensitivity.parse().unwrap_or(1.0).clamp(0.1, 10.0);
+    let sensitivity: f32 = settings
+        .mouse_sensitivity
+        .parse()
+        .unwrap_or(1.0)
+        .clamp(0.1, 10.0);
     let mut lines = vec![
         "# Uncharted controls (written by the launcher, Controls page)".to_string(),
         format!("mouse_look={}", i32::from(settings.mouse_look)),
@@ -126,10 +130,7 @@ pub fn game_environment(
     );
     if settings.sharpening != "off" {
         env.insert("BB_RCAS".into(), "1".into());
-        env.insert(
-            "BB_RCAS_ATTENUATION".into(),
-            settings.sharpening.clone(),
-        );
+        env.insert("BB_RCAS_ATTENUATION".into(), settings.sharpening.clone());
     } else {
         env.insert("BB_RCAS".into(), "0".into());
     }
@@ -200,9 +201,7 @@ pub fn launch_command(port_dir: &Path) -> (PathBuf, Vec<String>) {
     }
     (
         PathBuf::from("python"),
-        vec![
-            port_dir.join("run.py").to_string_lossy().into_owned(),
-        ],
+        vec![port_dir.join("run.py").to_string_lossy().into_owned()],
     )
 }
 
@@ -221,9 +220,15 @@ mod tests {
     fn input_ini_has_every_binding() {
         let text = input_ini(&settings());
         for (action, _key, pad) in BINDINGS {
-            assert!(text.contains(&format!("key.{action}=")), "missing key.{action}");
+            assert!(
+                text.contains(&format!("key.{action}=")),
+                "missing key.{action}"
+            );
             if !pad.is_empty() {
-                assert!(text.contains(&format!("pad.{action}=")), "missing pad.{action}");
+                assert!(
+                    text.contains(&format!("pad.{action}=")),
+                    "missing pad.{action}"
+                );
             }
         }
         // Stick directions have keyboard bindings but no controller buttons of their own.
@@ -238,12 +243,19 @@ mod tests {
         let pad_start = text.find("pad.").expect("pad rows");
         let last_key = text.rfind("key.").expect("key rows");
         assert_eq!(key_lines, 24, "{text}");
-        assert!(last_key < pad_start, "key rows must precede pad rows:\n{text}");
+        assert!(
+            last_key < pad_start,
+            "key rows must precede pad rows:\n{text}"
+        );
     }
 
     #[test]
     fn environment_carries_the_contract() {
-        let env = game_environment(&settings(), Path::new("C:\\cfg\\input.ini"), &BTreeMap::new());
+        let env = game_environment(
+            &settings(),
+            Path::new("C:\\cfg\\input.ini"),
+            &BTreeMap::new(),
+        );
         assert_eq!(env["BB_EXE"], "u1");
         assert_eq!(env["BB_GAME_DIR"], "D:\\Игры\\Uncharted Collection");
         assert_eq!(env["BB_PRESENT_MODE"], "Mailbox");
@@ -283,7 +295,11 @@ mod tests {
         let dir = std::env::temp_dir().join("uncharted-core-test-ini");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("bbport.ini");
-        std::fs::write(&path, "# comment\nlive_resolution=auto\nshow_fps=0\nempty=\n").unwrap();
+        std::fs::write(
+            &path,
+            "# comment\nlive_resolution=auto\nshow_fps=0\nempty=\n",
+        )
+        .unwrap();
         set_ini(&path, "show_fps", "1").unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("live_resolution=auto"));
@@ -299,7 +315,9 @@ mod tests {
         let path = dir.join("bbport.ini");
         std::fs::write(&path, "a=1\n").unwrap();
         set_ini(&path, "show_fps", "0").unwrap();
-        assert!(std::fs::read_to_string(&path).unwrap().ends_with("show_fps=0\n"));
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .ends_with("show_fps=0\n"));
         std::fs::remove_file(&path).unwrap();
         set_ini(&path, "show_fps", "1").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "show_fps=1\n");

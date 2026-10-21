@@ -148,11 +148,19 @@ mod tests {
         std::fs::write(dir.join("eboot.bin"), b"stub").unwrap();
         let mut s = Settings::default();
         s.game_dir_u2 = dir.to_string_lossy().into_owned();
-        assert!(game_available(&s, "u2"), "eboot.bin in a per-game folder must count");
-        assert!(!game_available(&s, "u3"), "u3 has no folder of its own here");
+        assert!(
+            game_available(&s, "u2"),
+            "eboot.bin in a per-game folder must count"
+        );
+        assert!(
+            !game_available(&s, "u3"),
+            "u3 has no folder of its own here"
+        );
         let mut own = Settings::default();
         own.game_dir_u3 = dir.to_string_lossy().into_owned();
-        assert!(game_available(&own, "u3"),
-                "the source accepts eboot.bin for any key with its own folder");
+        assert!(
+            game_available(&own, "u3"),
+            "the source accepts eboot.bin for any key with its own folder"
+        );
     }
 }

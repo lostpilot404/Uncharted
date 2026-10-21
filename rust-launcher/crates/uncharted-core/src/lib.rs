@@ -9,7 +9,7 @@
 pub mod diagnostics;
 pub mod discovery;
 pub mod launch;
-pub mod sfo;
 pub mod settings;
+pub mod sfo;
 pub mod update;
 pub mod vram;
