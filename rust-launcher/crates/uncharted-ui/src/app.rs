@@ -191,7 +191,10 @@ impl LauncherApp {
                 WorkerMsg::Report(text) => {
                     self.last_report = text.clone();
                     ctx.copy_text(text);
-                    self.set_status("Redacted diagnostics report copied to the clipboard.", false);
+                    self.set_status(
+                        "Redacted diagnostics report copied to the clipboard.",
+                        false,
+                    );
                     ctx.request_repaint();
                 }
             }
@@ -235,7 +238,10 @@ impl LauncherApp {
         // input.ini goes to the data dir; BB_INPUT_CONFIG points at it (write_input_ini).
         let input_path = self.data_dir.join("input.ini");
         if let Err(e) = std::fs::write(&input_path, input_ini(&self.settings)) {
-            self.set_status(&format!("Could not write {}: {e}", input_path.display()), true);
+            self.set_status(
+                &format!("Could not write {}: {e}", input_path.display()),
+                true,
+            );
             return;
         }
         let (program, args) = launch_command(&self.port_dir());
@@ -268,7 +274,8 @@ impl LauncherApp {
                 self.log_tail.clear();
                 self.set_status("Preparing the game; it opens in its own window…", false);
                 if self.settings.close_on_play {
-                    self.close_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+                    self.close_at =
+                        Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
                 }
             }
             Err(e) => {
@@ -314,16 +321,13 @@ impl eframe::App for LauncherApp {
                 let color = if self.status_error { ERROR } else { MUTED };
                 ui.label(egui::RichText::new(&self.status).color(color).size(13.0));
                 if self.play_state == PlayState::Running {
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            ui.label(
-                                egui::RichText::new("Game running")
-                                    .color(GOLD_HI)
-                                    .size(13.0),
-                            );
-                        },
-                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new("Game running")
+                                .color(GOLD_HI)
+                                .size(13.0),
+                        );
+                    });
                 }
             });
             ui.add_space(6.0);
@@ -345,7 +349,11 @@ impl eframe::App for LauncherApp {
                         .color(if selected { GOLD_HI } else { TEXT })
                         .size(15.0);
                     let button = egui::Button::new(text)
-                        .fill(if selected { CARD } else { egui::Color32::TRANSPARENT })
+                        .fill(if selected {
+                            CARD
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        })
                         .min_size(egui::vec2(ui.available_width(), 36.0));
                     if ui.add(button).clicked() {
                         self.page = page;
@@ -372,9 +380,11 @@ impl LauncherApp {
         ui.heading("Play");
         ui.add_space(4.0);
         ui.label(
-            egui::RichText::new("Choose the game, then press Play. The launcher never modifies \
-                                 your settings or save data on its own.")
-                .color(MUTED),
+            egui::RichText::new(
+                "Choose the game, then press Play. The launcher never modifies \
+                                 your settings or save data on its own.",
+            )
+            .color(MUTED),
         );
         ui.add_space(8.0);
 
@@ -391,7 +401,11 @@ impl LauncherApp {
                 text = text.color(GOLD_HI).strong();
             }
             let card = egui::Button::new(text)
-                .fill(if selected { CARD } else { egui::Color32::TRANSPARENT })
+                .fill(if selected {
+                    CARD
+                } else {
+                    egui::Color32::TRANSPARENT
+                })
                 .min_size(egui::vec2(ui.available_width(), 52.0));
             let resp = ui.add(card);
             if resp.clicked() {
@@ -405,7 +419,11 @@ impl LauncherApp {
                 } else {
                     "executable not found in the selected folder (Game page)"
                 })
-                .color(if status.executable_present { MUTED } else { WARN })
+                .color(if status.executable_present {
+                    MUTED
+                } else {
+                    WARN
+                })
                 .size(12.5),
             );
         }
@@ -440,11 +458,31 @@ impl LauncherApp {
         ui.heading("Game");
         ui.add_space(4.0);
         for (field, label, value) in [
-            ("game_dir", "Collection folder", self.settings.game_dir.clone()),
-            ("game_dir_u1", "Uncharted 1 folder (optional)", self.settings.game_dir_u1.clone()),
-            ("game_dir_u2", "Uncharted 2 folder (optional)", self.settings.game_dir_u2.clone()),
-            ("game_dir_u3", "Uncharted 3 folder (optional)", self.settings.game_dir_u3.clone()),
-            ("user_dir", "Saves folder (optional)", self.settings.user_dir.clone()),
+            (
+                "game_dir",
+                "Collection folder",
+                self.settings.game_dir.clone(),
+            ),
+            (
+                "game_dir_u1",
+                "Uncharted 1 folder (optional)",
+                self.settings.game_dir_u1.clone(),
+            ),
+            (
+                "game_dir_u2",
+                "Uncharted 2 folder (optional)",
+                self.settings.game_dir_u2.clone(),
+            ),
+            (
+                "game_dir_u3",
+                "Uncharted 3 folder (optional)",
+                self.settings.game_dir_u3.clone(),
+            ),
+            (
+                "user_dir",
+                "Saves folder (optional)",
+                self.settings.user_dir.clone(),
+            ),
         ] {
             theme::section(ui, label);
             ui.horizontal(|ui| {
@@ -497,17 +535,54 @@ impl LauncherApp {
         ui.add_space(4.0);
         let mut changed = false;
         for (label, field, options) in [
-            ("Presentation", "present_mode",
-             ["Fifo", "FifoRelaxed", "Mailbox", "Immediate"].as_slice()),
-            ("Frame rate", "frame_rate", ["60", "120", "144", "165", "240"].as_slice()),
-            ("Window size", "window_size", ["1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"].as_slice()),
+            (
+                "Presentation",
+                "present_mode",
+                ["Fifo", "FifoRelaxed", "Mailbox", "Immediate"].as_slice(),
+            ),
+            (
+                "Frame rate",
+                "frame_rate",
+                ["60", "120", "144", "165", "240"].as_slice(),
+            ),
+            (
+                "Window size",
+                "window_size",
+                [
+                    "1280x720",
+                    "1600x900",
+                    "1920x1080",
+                    "2560x1440",
+                    "3840x2160",
+                ]
+                .as_slice(),
+            ),
             ("Upscaling", "scaler", ["fsr1", "bilinear"].as_slice()),
-            ("Sharpening", "sharpening", ["off", "1000", "500", "250", "0"].as_slice()),
-            ("Anti-aliasing", "anti_aliasing",
-             ["off", "taa", "fsr3", "fsr4", "fsr411", "dlss"].as_slice()),
-            ("AA sharpness", "aa_sharpness", ["0", "0.2", "0.4", "0.7"].as_slice()),
-            ("Frame generation", "frame_generation", ["off", "fsr3", "dlss"].as_slice()),
-            ("Frame-gen multiplier", "frame_gen_multiplier", ["2", "3", "4"].as_slice()),
+            (
+                "Sharpening",
+                "sharpening",
+                ["off", "1000", "500", "250", "0"].as_slice(),
+            ),
+            (
+                "Anti-aliasing",
+                "anti_aliasing",
+                ["off", "taa", "fsr3", "fsr4", "fsr411", "dlss"].as_slice(),
+            ),
+            (
+                "AA sharpness",
+                "aa_sharpness",
+                ["0", "0.2", "0.4", "0.7"].as_slice(),
+            ),
+            (
+                "Frame generation",
+                "frame_generation",
+                ["off", "fsr3", "dlss"].as_slice(),
+            ),
+            (
+                "Frame-gen multiplier",
+                "frame_gen_multiplier",
+                ["2", "3", "4"].as_slice(),
+            ),
         ] {
             let current: &mut String = match field {
                 "present_mode" => &mut self.settings.present_mode,
@@ -538,18 +613,21 @@ impl LauncherApp {
             self.save();
         }
         ui.add_space(6.0);
-        if let Some(warning) =
-            low_vram_warning(self.vram_mb, &self.settings.anti_aliasing, &self.settings.frame_generation)
-        {
-            ui.label(egui::RichText::new(format!("⚠ {warning}")).color(WARN).size(13.0));
+        if let Some(warning) = low_vram_warning(
+            self.vram_mb,
+            &self.settings.anti_aliasing,
+            &self.settings.frame_generation,
+        ) {
+            ui.label(
+                egui::RichText::new(format!("⚠ {warning}"))
+                    .color(WARN)
+                    .size(13.0),
+            );
         } else if self.vram_mb.is_some() {
             ui.label(
-                egui::RichText::new(format!(
-                    "GPU: {}",
-                    self.gpu_line
-                ))
-                .color(MUTED)
-                .size(12.5),
+                egui::RichText::new(format!("GPU: {}", self.gpu_line))
+                    .color(MUTED)
+                    .size(12.5),
             );
         }
     }
@@ -573,11 +651,17 @@ impl LauncherApp {
             let log_tail = self.log_tail.clone();
             let user_profile = std::env::var("USERPROFILE").unwrap_or_default();
             let player = self.settings.player_name.clone();
-            let _ = self.job_tx.send(WorkerJob::BuildReport(self.settings.clone(), self.vram_mb));
+            let _ = self
+                .job_tx
+                .send(WorkerJob::BuildReport(self.settings.clone(), self.vram_mb));
             let _ = (settings_json, gpu_line, log_tail, user_profile, player);
         }
         if !self.last_report.is_empty() {
-            ui.label(egui::RichText::new("Last report copied:").color(MUTED).size(12.0));
+            ui.label(
+                egui::RichText::new("Last report copied:")
+                    .color(MUTED)
+                    .size(12.0),
+            );
             egui::ScrollArea::vertical()
                 .max_height(220.0)
                 .show(ui, |ui| {
@@ -589,13 +673,15 @@ impl LauncherApp {
                 });
         }
         theme::section(ui, "Log tail (last_run.log)");
-        egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-            ui.add(
-                egui::TextEdit::multiline(&mut self.log_tail.as_str())
-                    .desired_width(f32::INFINITY)
-                    .font(egui::TextStyle::Monospace),
-            );
-        });
+        egui::ScrollArea::vertical()
+            .max_height(320.0)
+            .show(ui, |ui| {
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.log_tail.as_str())
+                        .desired_width(f32::INFINITY)
+                        .font(egui::TextStyle::Monospace),
+                );
+            });
     }
 }
 
@@ -639,15 +725,18 @@ fn spawn_worker() -> (Sender<WorkerJob>, Sender<WorkerMsg>, Receiver<WorkerMsg>)
                         .output()
                         .ok()
                         .and_then(|out| {
-                            uncharted_core::vram::parse_gpu_memory(
-                                &String::from_utf8_lossy(&out.stderr),
-                            )
+                            uncharted_core::vram::parse_gpu_memory(&String::from_utf8_lossy(
+                                &out.stderr,
+                            ))
                             .1
                         });
                     let _ = msg_tx.send(WorkerMsg::Gpu(mib));
                 }
                 WorkerJob::Discover(settings) => {
-                    let folder = settings.game_dir_for(settings.start.as_str()).trim().to_string();
+                    let folder = settings
+                        .game_dir_for(settings.start.as_str())
+                        .trim()
+                        .to_string();
                     let info = if folder.is_empty() {
                         None
                     } else {
@@ -673,7 +762,9 @@ fn spawn_worker() -> (Sender<WorkerJob>, Sender<WorkerMsg>, Receiver<WorkerMsg>)
                     let _ = msg_tx.send(WorkerMsg::ChosenFolder(picked, field));
                 }
                 WorkerJob::BuildReport(settings, vram) => {
-                    let gpu = vram.map(|v| format!("{v} MiB of video memory")).unwrap_or_default();
+                    let gpu = vram
+                        .map(|v| format!("{v} MiB of video memory"))
+                        .unwrap_or_default();
                     let user_profile = std::env::var("USERPROFILE").unwrap_or_default();
                     // The log lives in the saves folder when set, else <data>/user.
                     let log_dir = if settings.user_dir.trim().is_empty() {
@@ -681,8 +772,8 @@ fn spawn_worker() -> (Sender<WorkerJob>, Sender<WorkerMsg>, Receiver<WorkerMsg>)
                     } else {
                         std::path::PathBuf::from(settings.user_dir.trim())
                     };
-                    let log_tail = std::fs::read_to_string(log_dir.join("last_run.log"))
-                        .unwrap_or_default();
+                    let log_tail =
+                        std::fs::read_to_string(log_dir.join("last_run.log")).unwrap_or_default();
                     let report = uncharted_core::diagnostics::report(
                         env!("CARGO_PKG_VERSION"),
                         &settings.to_json(),

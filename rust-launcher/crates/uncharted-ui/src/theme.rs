@@ -44,11 +44,23 @@ pub fn apply(ctx: &Context) {
 
     let mut style = (*ctx.style()).clone();
     style.text_styles = [
-        (TextStyle::Heading, FontId::new(22.0, FontFamily::Proportional)),
+        (
+            TextStyle::Heading,
+            FontId::new(22.0, FontFamily::Proportional),
+        ),
         (TextStyle::Body, FontId::new(15.0, FontFamily::Proportional)),
-        (TextStyle::Button, FontId::new(15.0, FontFamily::Proportional)),
-        (TextStyle::Small, FontId::new(12.5, FontFamily::Proportional)),
-        (TextStyle::Monospace, FontId::new(13.0, FontFamily::Monospace)),
+        (
+            TextStyle::Button,
+            FontId::new(15.0, FontFamily::Proportional),
+        ),
+        (
+            TextStyle::Small,
+            FontId::new(12.5, FontFamily::Proportional),
+        ),
+        (
+            TextStyle::Monospace,
+            FontId::new(13.0, FontFamily::Monospace),
+        ),
     ]
     .into();
     style.spacing.item_spacing = egui::vec2(10.0, 8.0);
@@ -60,7 +72,8 @@ pub fn apply(ctx: &Context) {
 /// A section label with the gold rule above it.
 pub fn section(ui: &mut egui::Ui, title: &str) {
     ui.add_space(6.0);
-    let (rect, _resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+    let (rect, _resp) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
     ui.painter().rect_filled(rect, 0.0, LINE);
     ui.add_space(8.0);
     ui.label(egui::RichText::new(title).color(GOLD).size(13.0));
