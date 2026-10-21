@@ -1,0 +1,60 @@
+# Windows CI for the two workstreams. Split into two workflows so each workstream
+# branch can carry only its own validation:
+#   rust-launcher.yml - the Rust launcher (fmt/tests/release build)
+#   runtime.yml       - the native runtime (documented MSYS2 CLANG64 toolchain)
+# Note: the standalone tests mirror the Linux-only `build.sh --test` block (build.sh
+# exits after the MSYS build before reaching it).
+name: Rust launcher CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rust-launcher:
+    name: Rust launcher (fmt, tests, release)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: rust-launcher
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: rustfmt
+        shell: bash
+        run: |
+          if ! out=$(cargo fmt --all -- --check 2>&1); then
+            # Job logs redirect to blob storage; emit the required changes as
+            # annotations so they are readable through the API.
+            while IFS= read -r line; do
+              echo "::error title=rustfmt::${line}"
+            done <<< "$(printf '%s' "$out" | cut -c1-3500 | head -12)"
+            exit 1
+          fi
+      - name: tests
+        shell: bash
+        run: |
+          if ! out=$(cargo test 2>&1); then
+            printf '%s\n' "$out" | tail -40 | while IFS= read -r line; do
+              echo "::error title=cargo-test::${line}"
+            done
+            exit 1
+          fi
+          printf '%s\n' "$out" | tail -5
+      - name: release build
+        shell: bash
+        run: |
+          if ! out=$(cargo build --release 2>&1); then
+            printf '%s\n' "$out" | grep -E '^(error|warning)' | head -20 | while IFS= read -r line; do
+              echo "::error title=cargo-build::${line}"
+            done
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uncharted-launcher-win
+          path: rust-launcher/target/release/uncharted-launcher.exe
+          if-no-files-found: error
