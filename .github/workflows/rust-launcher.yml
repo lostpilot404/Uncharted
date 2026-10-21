@@ -46,7 +46,8 @@ jobs:
           if ! out=$(cargo test 2>&1); then
             printf '%s' "$out" | sed $'s/\x1b\\[[0-9;]*m//g' | \
               awk 'BEGIN{ORS=""}
-                   /error(\[|:)/ { errs = errs $0 "\n"; next }
+                   /error(\[|:)/ { cap = 8 }
+                   cap > 0 { errs = errs $0 "\n"; cap--; next }
                    { tail = tail $0 "\n"; if (length(tail) > 8000) tail = substr(tail, length(tail)-8000) }
                    END {
                      line = "ERRORS:\n" errs "\nTAIL:\n" tail
@@ -62,7 +63,8 @@ jobs:
           if ! out=$(cargo build --release 2>&1); then
             printf '%s' "$out" | sed $'s/\x1b\\[[0-9;]*m//g' | \
               awk 'BEGIN{ORS=""}
-                   /error(\[|:)/ { errs = errs $0 "\n"; next }
+                   /error(\[|:)/ { cap = 8 }
+                   cap > 0 { errs = errs $0 "\n"; cap--; next }
                    END {
                      line = "ERRORS:\n" errs
                      gsub(/%/, "%25", line); gsub(/\r/, "%0D", line); gsub(/\n/, "%0A", line)

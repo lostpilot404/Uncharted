@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 pub fn input_ini(settings: &Settings) -> String {
     let sensitivity: f32 = settings
         .mouse_sensitivity
-        .parse()
+        .parse::<f32>()
         .unwrap_or(1.0)
         .clamp(0.1, 10.0);
     let mut lines = vec![
