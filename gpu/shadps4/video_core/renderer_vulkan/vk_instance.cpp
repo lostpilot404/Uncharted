@@ -820,12 +820,16 @@ void Instance::CollectPhysicalMemoryInfo() {
         // We reserve some memory for the system.
         const u64 system_memory = std::min<u64>(total_memory_budget / 8, 1_GB);
         total_memory_budget -= system_memory;
-        return;
+    } else {
+        // Leave at least 8 GB for the system on integrated GPUs.
+        const s64 available_memory = static_cast<s64>(total_memory_budget - device_initial_usage);
+        total_memory_budget =
+            static_cast<u64>(std::max<s64>(available_memory - 8_GB, static_cast<s64>(local_memory)));
     }
-    // Leave at least 8 GB for the system on integrated GPUs.
-    const s64 available_memory = static_cast<s64>(total_memory_budget - device_initial_usage);
-    total_memory_budget =
-        static_cast<u64>(std::max<s64>(available_memory - 8_GB, static_cast<s64>(local_memory)));
+    // bbport: the figures video-memory reports need (issue #256): the heaps, the budget this port
+    // works with (GetTotalMemoryBudget) and what other applications already use at startup.
+    LOG_INFO(Render_Vulkan, "GPU_Memory: {} MiB device-local, {} MiB budget, {} MiB in use at start",
+             local_memory >> 20, total_memory_budget >> 20, device_initial_usage >> 20);
 }
 
 void Instance::CollectImageFormatInfo() {
