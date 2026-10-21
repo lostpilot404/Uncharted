@@ -78,9 +78,7 @@ pub fn game_available(settings: &Settings, key: &str) -> bool {
     };
     let own_set = !own.trim().is_empty();
     match exe {
-        Some(exe) => {
-            folder.join(exe).is_file() || (own_set && folder.join("eboot.bin").is_file())
-        }
+        Some(exe) => folder.join(exe).is_file() || (own_set && folder.join("eboot.bin").is_file()),
         None => false,
     }
 }

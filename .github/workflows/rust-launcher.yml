@@ -27,11 +27,14 @@ jobs:
         shell: bash
         run: |
           if ! out=$(cargo fmt --all -- --check 2>&1); then
-            # Job logs redirect to blob storage; emit the required changes as
-            # annotations so they are readable through the API.
-            while IFS= read -r line; do
-              echo "::error title=rustfmt::${line}"
-            done <<< "$(printf '%s' "$out" | cut -c1-3500 | head -12)"
+            # Job logs redirect to blob storage; emit each file's diff as one
+            # %-escaped annotation so it is readable through the API.
+            printf '%s' "$out" | sed $'s/\x1b\\[[0-9;]*m//g' | \
+              awk 'BEGIN{RS="\nDiff in "; ORS=""} NR<=10 {
+                     line = (NR==1 ? $0 : "Diff in " $0)
+                     gsub(/%/, "%25", line); gsub(/\r/, "%0D", line); gsub(/\n/, "%0A", line)
+                     print "::error title=rustfmt::" line "\n"
+                   }'
             exit 1
           fi
       - name: tests
