@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use uncharted_core::discovery::{game_available, game_statuses, GameInfo, GameStatus};
-use uncharted_core::launch::{game_environment, input_ini, launch_command, set_ini};
+use uncharted_core::launch::{game_environment, ini_path, input_ini, launch_command, set_ini};
 use uncharted_core::settings::Settings;
 use uncharted_core::vram::{low_vram_warning, RECOMMENDED_VRAM_MB};
 
@@ -286,7 +286,8 @@ impl LauncherApp {
 }
 
 impl eframe::App for LauncherApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    /// State work only (eframe 0.36: painting is not allowed in logic()).
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain_worker(ctx);
         self.poll_game();
         // close_on_play: the Python launcher closes itself five seconds after the game starts.
@@ -296,8 +297,10 @@ impl eframe::App for LauncherApp {
                 self.close_at = None;
             }
         }
+    }
 
-        egui::TopBottomPanel::top("title").show(ctx, |ui| {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        egui::Panel::top("title").show(ui, |ui| {
             ui.add_space(10.0);
             ui.horizontal(|ui| {
                 ui.label(
@@ -315,7 +318,7 @@ impl eframe::App for LauncherApp {
             ui.add_space(6.0);
         });
 
-        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+        egui::Panel::bottom("status").show(ui, |ui| {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 let color = if self.status_error { ERROR } else { MUTED };
@@ -333,10 +336,10 @@ impl eframe::App for LauncherApp {
             ui.add_space(6.0);
         });
 
-        egui::SidePanel::left("nav")
+        egui::Panel::left("nav")
             .resizable(false)
-            .exact_width(170.0)
-            .show(ctx, |ui| {
+            .exact_size(170.0)
+            .show(ui, |ui| {
                 ui.add_space(12.0);
                 for (page, label) in [
                     (Page::Play, "Play"),
@@ -364,7 +367,7 @@ impl eframe::App for LauncherApp {
                 }
             });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| match self.page {
                 Page::Play => self.page_play(ui),
                 Page::Game => self.page_game(ui),

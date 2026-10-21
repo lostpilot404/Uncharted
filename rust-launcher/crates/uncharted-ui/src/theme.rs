@@ -2,7 +2,7 @@
 //! Palette mirrors the current launcher (COLORS in launcher/uncharted_launcher.py) so the
 //! two frontends look like the same product.
 
-use egui::{Color32, Context, FontFamily, FontId, Rounding, Stroke, TextStyle, Visuals};
+use egui::{Color32, Context, CornerRadius, FontFamily, FontId, Stroke, TextStyle, Visuals};
 
 pub const BG: Color32 = Color32::from_rgb(0x08, 0x09, 0x0a);
 pub const PANEL: Color32 = Color32::from_rgb(0x0c, 0x0d, 0x0f);
@@ -28,18 +28,18 @@ pub fn apply(ctx: &Context) {
     visuals.selection.stroke = Stroke::new(1.0, GOLD_HI);
     visuals.widgets.noninteractive.bg_fill = CARD;
     visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, MUTED);
-    visuals.widgets.noninteractive.rounding = Rounding::same(6.0);
+    visuals.widgets.noninteractive.corner_radius = CornerRadius::same(6);
     visuals.widgets.inactive.bg_fill = CARD;
     visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT);
-    visuals.widgets.inactive.rounding = Rounding::same(6.0);
+    visuals.widgets.inactive.corner_radius = CornerRadius::same(6);
     visuals.widgets.hovered.bg_fill = CARD_HI;
     visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, GOLD_HI);
-    visuals.widgets.hovered.rounding = Rounding::same(6.0);
+    visuals.widgets.hovered.corner_radius = CornerRadius::same(6);
     visuals.widgets.active.bg_fill = CARD_HI;
     visuals.widgets.active.fg_stroke = Stroke::new(1.0, GOLD);
-    visuals.widgets.active.rounding = Rounding::same(6.0);
+    visuals.widgets.active.corner_radius = CornerRadius::same(6);
     visuals.slider_trailing_fill = true;
-    visuals.window_rounding = Rounding::same(10.0);
+    visuals.window_corner_radius = CornerRadius::same(10);
     ctx.set_visuals(visuals);
 
     let mut style = (*ctx.style()).clone();
