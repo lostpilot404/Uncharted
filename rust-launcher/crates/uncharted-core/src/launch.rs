@@ -18,15 +18,18 @@ pub fn input_ini(settings: &Settings) -> String {
         format!("mouse_invert_y={}", i32::from(settings.mouse_invert_y)),
         format!("pad_invert_y={}", i32::from(settings.pad_invert_y)),
     ];
-    for (action, default_key, default_pad) in BINDINGS {
+    // Line order matches write_input_ini(): all key.* rows (BUTTON_ACTIONS then
+    // STICK_ACTIONS), then pad.* rows (BUTTON_ACTIONS only).
+    for (action, default_key, _pad) in BINDINGS {
         let key = settings
             .key_bindings
             .get(*action)
             .map(String::as_str)
             .unwrap_or(default_key);
         lines.push(format!("key.{action}={key}"));
+    }
+    for (action, _key, default_pad) in BINDINGS {
         if !default_pad.is_empty() {
-            // The Python launcher writes pad.<action> for BUTTON_ACTIONS only (no stick rows).
             let pad = settings
                 .pad_bindings
                 .get(*action)
@@ -230,6 +233,12 @@ mod tests {
         assert!(text.contains("mouse_look=1"));
         // Sensitivity is clamped to the slider's range and formatted stably.
         assert!(text.contains("mouse_sensitivity=5.00"));
+        // Line order matches write_input_ini(): every key.* row precedes every pad.* row.
+        let key_lines = text.lines().filter(|l| l.starts_with("key.")).count();
+        let pad_start = text.find("pad.").expect("pad rows");
+        let last_key = text.rfind("key.").expect("key rows");
+        assert_eq!(key_lines, 24, "{text}");
+        assert!(last_key < pad_start, "key rows must precede pad rows:\n{text}");
     }
 
     #[test]
