@@ -42,31 +42,31 @@ pub fn apply(ctx: &Context) {
     visuals.window_corner_radius = CornerRadius::same(10);
     ctx.set_visuals(visuals);
 
-    let mut style = (*ctx.style()).clone();
-    style.text_styles = [
-        (
-            TextStyle::Heading,
-            FontId::new(22.0, FontFamily::Proportional),
-        ),
-        (TextStyle::Body, FontId::new(15.0, FontFamily::Proportional)),
-        (
-            TextStyle::Button,
-            FontId::new(15.0, FontFamily::Proportional),
-        ),
-        (
-            TextStyle::Small,
-            FontId::new(12.5, FontFamily::Proportional),
-        ),
-        (
-            TextStyle::Monospace,
-            FontId::new(13.0, FontFamily::Monospace),
-        ),
-    ]
-    .into();
-    style.spacing.item_spacing = egui::vec2(10.0, 8.0);
-    style.spacing.button_padding = egui::vec2(14.0, 7.0);
-    style.spacing.interact_size.y = 32.0;
-    ctx.set_style(style);
+    ctx.all_styles_mut(|style| {
+        style.text_styles = [
+            (
+                TextStyle::Heading,
+                FontId::new(22.0, FontFamily::Proportional),
+            ),
+            (TextStyle::Body, FontId::new(15.0, FontFamily::Proportional)),
+            (
+                TextStyle::Button,
+                FontId::new(15.0, FontFamily::Proportional),
+            ),
+            (
+                TextStyle::Small,
+                FontId::new(12.5, FontFamily::Proportional),
+            ),
+            (
+                TextStyle::Monospace,
+                FontId::new(13.0, FontFamily::Monospace),
+            ),
+        ]
+        .into();
+        style.spacing.item_spacing = egui::vec2(10.0, 8.0);
+        style.spacing.button_padding = egui::vec2(14.0, 7.0);
+        style.spacing.interact_size.y = 32.0;
+    });
 }
 
 /// A section label with the gold rule above it.
