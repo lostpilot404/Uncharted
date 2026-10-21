@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -153,7 +154,10 @@ class ModTests(unittest.TestCase):
         env = dict(os.environ, BB_PREBUILT='1', BB_PROBE=str(probe), PYTHON=str(python),
             BB_DATA_DIR=str(self.root), BB_GAME_DIR=str(self.game),
             BB_MODS_DIR=str(self.moddir), BB_MODS_ENABLED='1', BB_MODS_CONFIG=str(self.root/'mods.json'))
-        result = subprocess.run(['bash', 'run.sh'], cwd=ROOT, env=env, capture_output=True, timeout=30)
+        # which('bash'): a bare 'bash' resolves to WSL's System32 stub on a plain
+        # Windows PATH and dies with "no installed distributions".
+        result = subprocess.run([shutil.which('bash') or 'bash', 'run.sh'], cwd=ROOT, env=env,
+                                capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 7,
                          'stdout:\n' + result.stdout.decode(errors='replace') +
                          '\nstderr:\n' + result.stderr.decode(errors='replace'))
