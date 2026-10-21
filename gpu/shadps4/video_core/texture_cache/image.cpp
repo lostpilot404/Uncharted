@@ -102,7 +102,7 @@ void UniqueImage::Destroy() {
     }
 }
 
-void UniqueImage::Create(const vk::ImageCreateInfo& image_ci) {
+VkResult UniqueImage::Create(const vk::ImageCreateInfo& image_ci) {
     this->image_ci = image_ci;
     ASSERT(!image);
     const VmaAllocationCreateInfo alloc_ci = {
@@ -119,10 +119,13 @@ void UniqueImage::Create(const vk::ImageCreateInfo& image_ci) {
     VmaAllocationInfo alloc_info{};
     VkResult result = vmaCreateImage(allocator, &image_ci_unsafe, &alloc_ci, &unsafe_image,
                                      &allocation, &alloc_info);
-    ASSERT_MSG(result == VK_SUCCESS, "Failed allocating image with error {}",
-               vk::to_string(vk::Result{result}));
-    image = vk::Image{unsafe_image};
-    size_bytes = alloc_info.size;
+    // bbport: out of video memory is not fatal here. Image records it and TextureCache::InsertImage
+    // evicts idle images and retries before failing hard (issue #256, the README's 4 GB cards).
+    if (result == VK_SUCCESS) {
+        image = vk::Image{unsafe_image};
+        size_bytes = alloc_info.size;
+    }
+    return result;
 }
 
 Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,
@@ -211,7 +214,18 @@ Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,
     backing = &backing_images.emplace_back();
     backing->num_samples = info.num_samples;
     backing->image = UniqueImage{instance.GetDevice(), instance.GetAllocator()};
-    backing->image.Create(image_ci);
+    const VkResult alloc_result = backing->image.Create(image_ci);
+    if (alloc_result != VK_SUCCESS) {
+        // bbport: out of video memory is recorded for TextureCache::InsertImage (evict and
+        // retry). Every other error stays fatal here, as it always was.
+        if (alloc_result == VK_ERROR_OUT_OF_DEVICE_MEMORY ||
+            alloc_result == VK_ERROR_OUT_OF_HOST_MEMORY) {
+            allocation_failed = true;
+            return;
+        }
+        ASSERT_MSG(false, "Failed allocating image with error {}",
+                   vk::to_string(vk::Result{alloc_result}));
+    }
     // bbport diagnosis: BB_IMAGE_LOG=1 names every image with its Vulkan handle (matched against
     // the GPU crash address report).
     static const bool image_log = [] {

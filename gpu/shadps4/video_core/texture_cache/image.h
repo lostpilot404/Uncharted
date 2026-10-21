@@ -61,7 +61,9 @@ struct UniqueImage {
         return *this;
     }
 
-    void Create(const vk::ImageCreateInfo& image_ci);
+    /// bbport: returns VK_ERROR_OUT_OF_DEVICE_MEMORY / VK_ERROR_OUT_OF_HOST_MEMORY instead of
+    /// asserting, so the texture cache can evict idle images and retry (TextureCache::InsertImage).
+    VkResult Create(const vk::ImageCreateInfo& image_ci);
 
     void Destroy();
 
@@ -112,6 +114,12 @@ struct Image {
         return track_addr != 0 && track_addr_end != 0;
     }
 
+    /// bbport: the Vulkan image allocation ran out of video memory; the cache evicts and retries
+    /// (TextureCache::InsertImage) before a failed slot ever escapes.
+    bool IsAllocFailed() const {
+        return allocation_failed;
+    }
+
     bool SafeToDownload() const {
         return True(flags & ImageFlagBits::GpuModified) && False(flags & (ImageFlagBits::Dirty));
     }
@@ -152,6 +160,7 @@ public:
         u32 vo_surface : 1;
     } usage{};
     bool scene_proxy = false; ///< bbport: SceneTargets holds a reduced-size proxy of it
+    bool allocation_failed = false; ///< bbport: out of video memory creating the image
     VAddr track_addr = 0;
     VAddr track_addr_end = 0;
     VAddr guest_begin = 0; ///< info.guest_address
