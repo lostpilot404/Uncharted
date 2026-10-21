@@ -114,7 +114,7 @@ impl Settings {
     /// messages instead of starting a doomed process.
     pub fn problems(&self) -> Vec<String> {
         let mut out = Vec::new();
-        if self.game_dir.trim().is_empty() && self.game_dir_for(self.start).trim().is_empty() {
+        if self.game_dir.trim().is_empty() && self.game_dir_for(self.start.as_str()).trim().is_empty() {
             out.push("Set the game folder (the one with eboot.bin) on the Game page.".into());
         }
         if !["u1", "u2", "u3"].contains(&self.start.as_str()) {
