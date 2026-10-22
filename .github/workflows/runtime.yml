@@ -60,6 +60,18 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$out" | tail -5
+      - name: Compiler errors (only when the build failed)
+        if: failure()
+        shell: msys2 {0}
+        run: |
+          # The step above tails build.sh's output, which a failed build fills with CMake
+          # warnings; these are the actual compiler errors, short enough to fit in annotations.
+          if [[ -f out/gpu-build.log ]]; then
+            grep -E "error:" out/gpu-build.log | head -8 | cut -c1-300 | while IFS= read -r line; do
+              echo "::error title=compile::${line}"
+            done
+          fi
+
       - name: Standalone tests (portable subset of the Linux-only build.sh --test block)
         shell: msys2 {0}
         run: |
