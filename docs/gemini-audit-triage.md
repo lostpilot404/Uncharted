@@ -1014,6 +1014,7 @@ has no Windows runtime, Wine, or Windows cross-toolchain. The only local results
   reference there.
 - `python3 -m unittest discover -s tests -p 'test_*.py'` — 98 tests, 28 skips, OK.
 - Windows API behavior (including error 487 and `STATUS_ACCESS_VIOLATION`) — **not yet observed**.
+- The first Runtime CI attempt on `241ab1da126c893ae80b29d50628b3dbd0e6f51b` ([run 39838263644](https://github.com/lostpilot404/Uncharted/actions/runs/39838263644)) passed the Windows runtime build and existing standalone tests, then stopped at harness link time: `ld.lld: undefined symbol: VirtualAlloc2`. No characterization API calls ran. The production target already links `onecore`; the standalone CI command and documented build now link `-lonecore`. A rerun is required before reporting Windows observations.
 
 ### Fix disposition
 

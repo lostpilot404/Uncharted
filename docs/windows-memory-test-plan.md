@@ -40,8 +40,9 @@ dependencies, so it is not the smallest boundary.
 
 On the Windows branch the remaining project-level link references are `runtime_lookup()` and
 `compat_sleep_ns()`; the test supplies inert stubs because neither is exercised. The build needs
-the C runtime, Win32 APIs, and the already-installed MSYS2 winpthreads library, but no GPU, SDL,
-FFmpeg, game data, full runtime build, or test framework. This is a credible, dependency-minimal
+the C runtime, Win32 APIs, the onecore import library for the Windows 10 memory APIs, and the
+already-installed MSYS2 winpthreads library, but no GPU, SDL, FFmpeg, game data, full runtime
+build, or test framework. This is a credible, dependency-minimal
 standalone build. The complete `runtime_memory.c` is compiled, not a copied subset. The Linux
 translation unit also compiles locally with GCC `-Wall -Wextra -Werror`; this environment cannot
 compile its `_WIN32` branch.
@@ -52,7 +53,7 @@ including the production source):
 ```sh
 mkdir -p out
 clang -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -Isrc \
-  tests/test_windows_memory.c -o out/windows-memory-test.exe
+  tests/test_windows_memory.c -lonecore -o out/windows-memory-test.exe
 out/windows-memory-test.exe
 ```
 

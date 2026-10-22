@@ -854,7 +854,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "FAIL: Windows page/allocation granularity is incompatible with fixture alignment\n");
         return 1;
     }
-    printf("Harness dependencies: Win32 APIs + C runtime + winpthreads; no GPU/SDL/FFmpeg/runtime build\n");
+    printf("Harness dependencies: Win32 APIs + onecore + C runtime + winpthreads; no GPU/SDL/FFmpeg/runtime build\n");
     run_reservation_test();
     run_fixture_test();
     run_gap_test();
