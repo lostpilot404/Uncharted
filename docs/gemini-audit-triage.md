@@ -845,17 +845,22 @@ The branch was pushed and PR #6 opened (`https://github.com/lostpilot404/Unchart
 base `main`, head `arena/3219e6b1-uncharted`) so the new test step could be exercised on real
 Windows rather than merely predicted. Nothing was merged.
 
-Run for the final PR head `be9d9c1e126e5028d840a558a1945afaffc32d8c` (all three on that exact
-SHA, created 2026-10-22T16:10:30Z):
+Run for the final PR head `a17a4bf3fac22bf6406ed60b2d70f36b05ac9f14`, all three reporting that
+exact SHA:
 
 | Workflow | Run | Result |
 |---|---|---|
-| Runtime CI | https://github.com/lostpilot404/Uncharted/actions/runs/39811702837 | **success**, 7m43s |
-| Rust launcher CI | https://github.com/lostpilot404/Uncharted/actions/runs/39811702830 | **success**, 3m9s |
-| Windows package | https://github.com/lostpilot404/Uncharted/actions/runs/39811702866 | **success**, 13m18s — the packaged ZIP was rebuilt and checked with the fix in the tree |
+| Runtime CI | https://github.com/lostpilot404/Uncharted/actions/runs/39813852060 | **success**, 6m21s |
+| Rust launcher CI | https://github.com/lostpilot404/Uncharted/actions/runs/39813852104 | **success**, 3m41s |
+| Windows package | https://github.com/lostpilot404/Uncharted/actions/runs/39813851971 | **success** — the packaged ZIP was rebuilt and checked with the fix in the tree |
 
-The earlier heads were also fully green: `b80d143` (Runtime 39807667506, Rust launcher
-39807670668, package 39807667460) and `32f49aa` (39805755984 / 39805755756 / 39805757419).
+The runtime job's annotation for that run reads
+`notice: mutex-cond-test ran and passed (destroyed cond handles reported, statistics race-free)`.
+
+Every earlier head of this branch was also fully green, so no run is being relied on out of
+sequence: `be9d9c1` (Runtime 39811702837, Rust launcher 39811702830, package 39811702866),
+`b80d143` (39807667506 / 39807670668 / 39807667460) and `32f49aa`
+(39805755984 / 39805755756 / 39805757419).
 
 The first push (`52ccbfb`) also produced a fully green Runtime CI
 (https://github.com/lostpilot404/Uncharted/actions/runs/39801999073) and Rust launcher CI
