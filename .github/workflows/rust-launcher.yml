@@ -1,0 +1,82 @@
+# Windows CI for the two workstreams. Split into two workflows so each workstream
+# branch can carry only its own validation:
+#   rust-launcher.yml - the Rust launcher (fmt/tests/release build)
+#   runtime.yml       - the native runtime (documented MSYS2 CLANG64 toolchain)
+# Note: the standalone tests mirror the Linux-only `build.sh --test` block (build.sh
+# exits after the MSYS build before reaching it).
+name: Rust launcher CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rust-launcher:
+    name: Rust launcher (fmt, tests, release)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: rust-launcher
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust-launcher
+      - name: rustfmt
+        shell: bash
+        run: |
+          if ! out=$(cargo fmt --all -- --check 2>&1); then
+            # Job logs redirect to blob storage; emit each file's diff as one
+            # %-escaped annotation so it is readable through the API.
+            printf '%s' "$out" | sed $'s/\x1b\\[[0-9;]*m//g' | \
+              awk 'BEGIN{RS="\nDiff in "; ORS=""}
+                   {
+                     line = (NR==1 ? $0 : "Diff in " $0)
+                     gsub(/%/, "%25", line); gsub(/\r/, "%0D", line); gsub(/\n/, "%0A", line)
+                     # 10 of each level: some ceiling at 10 annotations per type per step.
+                     lvl = (NR<=10 ? "error" : (NR<=20 ? "notice" : "warning"))
+                     print "::" lvl " title=rustfmt::" line "\n"
+                   }'
+            exit 1
+          fi
+      - name: tests
+        shell: bash
+        run: |
+          if ! out=$(cargo test 2>&1); then
+            printf '%s' "$out" | sed $'s/\x1b\\[[0-9;]*m//g' | \
+              awk 'BEGIN{ORS=""}
+                   /error(\[|:)/ || /panicked at/ || /^failures:/ || /FAILED$/ || /^test .* \.\.\./ { cap = 10 }
+                   cap > 0 { errs = errs $0 "\n"; cap--; next }
+                   { tail = tail $0 "\n"; if (length(tail) > 6000) tail = substr(tail, length(tail)-6000) }
+                   END {
+                     line = "ERRORS:\n" errs "\nTAIL:\n" tail
+                     gsub(/%/, "%25", line); gsub(/\r/, "%0D", line); gsub(/\n/, "%0A", line)
+                     print "::error title=cargo-test::" line "\n"
+                   }'
+            exit 1
+          fi
+          printf '%s\n' "$out" | tail -5
+      - name: release build
+        shell: bash
+        run: |
+          if ! out=$(cargo build --release 2>&1); then
+            printf '%s' "$out" | sed $'s/\x1b\\[[0-9;]*m//g' | \
+              awk 'BEGIN{ORS=""}
+                   /error(\[|:)/ { cap = 8 }
+                   cap > 0 { errs = errs $0 "\n"; cap--; next }
+                   END {
+                     line = "ERRORS:\n" errs
+                     gsub(/%/, "%25", line); gsub(/\r/, "%0D", line); gsub(/\n/, "%0A", line)
+                     print "::error title=cargo-build::" line "\n"
+                   }'
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uncharted-launcher-win
+          path: rust-launcher/target/release/uncharted-launcher.exe
+          if-no-files-found: error
