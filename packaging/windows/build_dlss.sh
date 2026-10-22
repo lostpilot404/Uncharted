@@ -8,9 +8,20 @@ set -euo pipefail
 cd -- "$(dirname -- "$0")/../.."
 sdk=${DLSS_SDK_ROOT:?Set DLSS_SDK_ROOT to a checkout of github.com/NVIDIA/DLSS}
 cmake=${CMAKE_EXE:-cmake}
-# Only the Vulkan headers: MSYS2's C headers must not reach MSVC.
+# Only the Vulkan headers: MSYS2's C headers must not reach MSVC. The MSYS2 root is not
+# always /c/msys64 (CI installs it elsewhere), so find it from the running toolchain first.
+include_root=
+for candidate in "$(dirname -- "$(command -v clang || echo /nonexistent/clang)")/../include" \
+                 "${MSYS2_ROOT:-/c/msys64}/clang64/include" /clang64/include; do
+    if [[ -d $candidate/vulkan ]]; then include_root=$candidate; break; fi
+done
+if [[ -z $include_root ]]; then
+    echo 'Vulkan headers not found: install mingw-w64-clang-x86_64-vulkan-headers (MSYS2 CLANG64)' >&2
+    exit 1
+fi
 rm -rf out/vkinclude && mkdir -p out/vkinclude
-cp -r /c/msys64/clang64/include/vulkan /c/msys64/clang64/include/vk_video out/vkinclude/
+cp -r "$include_root/vulkan" out/vkinclude/
+if [[ -d $include_root/vk_video ]]; then cp -r "$include_root/vk_video" out/vkinclude/; fi
 "$cmake" -S gpu/dlss_bridge -B out/dlss-bridge -G "Visual Studio 17 2022" -A x64 \
     -DDLSS_SDK_ROOT="$(cygpath -m "$sdk")" -DVULKAN_INCLUDE="$(cygpath -m "$PWD/out/vkinclude")"
 "$cmake" --build out/dlss-bridge --config Release
