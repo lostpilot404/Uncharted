@@ -17,7 +17,9 @@ code runs directly on your PC and the graphics are translated to Vulkan. Unpack 
 
 - All three games from one launcher: Drake's Fortune, Among Thieves and Drake's Deception.
 - 60 FPS like on PS4, or 120 FPS (higher rates are experimental).
-- Anti-aliasing with TAA, AMD FSR 3.1, AMD FSR 4 or NVIDIA DLSS (DLAA).
+- Anti-aliasing and super resolution: TAA, AMD FSR 3.1, AMD FSR 4, or NVIDIA DLSS — Native AA
+  (DLAA) or Super Resolution at the Quality/Balanced/Performance/Ultra Performance presets
+  (RTX 20 series and newer; see [docs/dlss-sr.md](docs/dlss-sr.md)).
 - Frame generation: AMD FSR 3 (any GPU) or NVIDIA DLSS (RTX 40 2x, RTX 50 up to 4x).
 - Keyboard, mouse and controller together, all remappable. Mouse look in U3.
 - Add to Steam and desktop shortcuts from the launcher, automatic updates.

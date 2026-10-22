@@ -1,0 +1,135 @@
+# The complete Windows package: Uncharted.exe (the PyInstaller-frozen launcher), the runtime
+# (bb-probe.exe + MSYS2 CLANG64 DLLs), the preparation scripts, the shader library, and the
+# DLSS bridge + NVIDIA runtimes built from the public DLSS SDK.
+#
+# Unlike runtime.yml (which tests the runtime and uploads three executables), this workflow
+# runs the real packaging script and uploads the playable ZIP with a checksum, so a package can
+# be produced and inspected without a Windows machine. It does NOT run the game: no runner has
+# an NVIDIA GPU, so DLSS itself stays unverified until someone plays it (docs/dlss-sr.md).
+name: Windows package
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: windows-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Package (MSYS2 CLANG64 + MSVC DLSS bridge)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: CLANG64
+          update: false
+          install: >-
+            git patch zip unzip
+            mingw-w64-clang-x86_64-toolchain
+            mingw-w64-clang-x86_64-cmake
+            mingw-w64-clang-x86_64-ninja
+            mingw-w64-clang-x86_64-pkgconf
+            mingw-w64-clang-x86_64-python
+            mingw-w64-clang-x86_64-vulkan-headers
+            mingw-w64-clang-x86_64-vulkan-loader
+            mingw-w64-clang-x86_64-vulkan-memory-allocator
+            mingw-w64-clang-x86_64-glslang
+            mingw-w64-clang-x86_64-sdl3
+            mingw-w64-clang-x86_64-fmt
+            mingw-w64-clang-x86_64-boost
+            mingw-w64-clang-x86_64-robin-map
+            mingw-w64-clang-x86_64-xxhash
+            mingw-w64-clang-x86_64-ffmpeg
+            mingw-w64-clang-x86_64-zydis
+            mingw-w64-clang-x86_64-spirv-tools
+            mingw-w64-clang-x86_64-spirv-headers
+            mingw-w64-clang-x86_64-spirv-cross
+            mingw-w64-clang-x86_64-protobuf
+            mingw-w64-clang-x86_64-openssl
+            mingw-w64-clang-x86_64-zlib
+            mingw-w64-clang-x86_64-miniupnpc
+            mingw-w64-clang-x86_64-nlohmann-json
+
+      - name: Build the Windows runtime (build.sh, MSYS2 CLANG64)
+        shell: msys2 {0}
+        run: |
+          git config --global --add safe.directory '*'
+          if ! out=$(bash build.sh 2>&1); then
+            printf '%s\n' "$out" | tail -40 | while IFS= read -r line; do
+              echo "::error title=build.sh::${line}"
+            done
+            exit 1
+          fi
+          printf '%s\n' "$out" | tail -5
+
+      - name: Build the DLSS bridge and stage NVIDIA's runtimes (MSVC)
+        shell: msys2 {0}
+        run: |
+          set -e
+          # github.com/NVIDIA/DLSS: headers, nvsdk_ngx_s.lib, and nvngx_dlss.dll /
+          # nvngx_dlssg.dll, redistributed with an application under its LICENSE.txt, which
+          # packaging/windows/build_dlss.sh copies into out/NVIDIA-DLSS-LICENSE.txt.
+          rm -rf out/dlss-sdk
+          git clone --depth 1 --quiet https://github.com/NVIDIA/DLSS out/dlss-sdk
+          export DLSS_SDK_ROOT=$PWD/out/dlss-sdk
+          if ! out=$(bash packaging/windows/build_dlss.sh 2>&1); then
+            printf '%s\n' "$out" | tail -40 | while IFS= read -r line; do
+              echo "::error title=build_dlss.sh::${line}"
+            done
+            exit 1
+          fi
+          printf '%s\n' "$out" | tail -3
+          for file in out/bbport_dlss.dll out/nvngx_dlss.dll out/NVIDIA-DLSS-LICENSE.txt; do
+            test -f "$file" || { echo "::error title=dlss::missing $file"; exit 1; }
+          done
+
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: '3.12'
+
+      - name: Assemble the package (packaging/windows/package.sh)
+        shell: msys2 {0}
+        env:
+          WINPYTHON_WINDOWS: ${{ steps.py.outputs.python-path }}
+        run: |
+          set -e
+          # package.sh needs a python.org Python (PyInstaller), not MSYS2's.
+          export WINPYTHON=$(cygpath -u "$WINPYTHON_WINDOWS")
+          "$WINPYTHON" --version
+          if ! out=$(bash packaging/windows/package.sh 2>&1); then
+            printf '%s\n' "$out" | tail -40 | while IFS= read -r line; do
+              echo "::error title=package.sh::${line}"
+            done
+            exit 1
+          fi
+          printf '%s\n' "$out" | tail -6
+
+      - name: Verify the package contents and checksum
+        shell: msys2 {0}
+        run: |
+          set -e
+          zip=dist/uncharted-windows.zip
+          test -f "$zip" || { echo "::error title=package::no $zip"; exit 1; }
+          sha256sum "$zip" | tee "$zip.sha256"
+          python tools/verify_package.py "$zip"
+          du -sh "$zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uncharted-windows-package
+          path: |
+            dist/uncharted-windows.zip
+            dist/uncharted-windows.zip.sha256
+          if-no-files-found: error
+          retention-days: 30

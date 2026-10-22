@@ -74,9 +74,22 @@ SCALERS = [('fsr1', 'FSR 1 (AMD FidelityFX, sharp)'), ('bilinear', 'Smooth (bili
 SHARPENING = [('off', 'Off'), ('1000', 'Low'), ('500', 'Medium'), ('250', 'High'), ('0', 'Maximum')]
 # Temporal anti-aliasing at the games' 1920x1080 (BB_UPSCALER): it takes the scene before the
 # games' post-processing with their own motion vectors, so it replaces their edge smoothing.
-ANTI_ALIASING = [('off', "Off (the game's own)"), ('taa', 'TAA'), ('fsr3', 'AMD FSR 3.1 (Native AA)'),
-                 ('fsr4', 'AMD FSR 4 (Native AA)'), ('dlss', 'NVIDIA DLSS (DLAA, GeForce RTX)')]
-FSR411 = ('fsr411', 'AMD FSR 4.1.1 (Native AA)')
+ANTI_ALIASING = [('off', "Off (the game's own)"), ('taa', 'TAA'), ('fsr3', 'AMD FSR 3.1'),
+                 ('fsr4', 'AMD FSR 4'), ('dlss', 'NVIDIA DLSS (GeForce RTX)')]
+FSR411 = ('fsr411', 'AMD FSR 4.1.1')
+# The render size the upscaler inputs (BB_UPSCALE_PRESET). '' keeps whatever the game menu
+# saved in bbport.ini; the others pin it for this launch. Native AA is DLAA: no upscaling.
+# The scales are NVIDIA's/AMD's own ratios: 1920x1080 -> 1280x720 (Quality), 1130x636
+# (Balanced), 960x540 (Performance), 640x360 (Ultra Performance).
+AA_PRESETS = [('', 'As set in the game menu'),
+              ('0', 'Native AA (no upscaling, DLAA)'),
+              ('1', 'Quality (1.5×, 1280 × 720)'),
+              ('2', 'Balanced (1.7×)'),
+              ('3', 'Performance (2.0×, 960 × 540)'),
+              ('4', 'Ultra Performance (3.0×)')]
+# sr_velocity: Uncharted's camera pins the render size; '' leaves the runtime default (DLSS
+# super resolution on, other upscalers at the game's size), '0' forces the game's size.
+AA_SR_VELOCITY = {'': '', '0': '0', '1': '1', '2': '1', '3': '1', '4': '1'}
 AA_SHARPNESS = [('0', 'Off'), ('0.2', 'Low'), ('0.4', 'Medium'), ('0.7', 'High')]
 # Frames generated between two of the game's (BB_FRAME_GEN, BB_FRAME_GEN_MULTIPLIER).
 FRAME_GENERATION = [('off', 'Off'), ('fsr3', 'AMD FSR 3 Frame Generation (any GPU)'),
@@ -136,7 +149,7 @@ RESERVED_KEYS = {'Insert': 'Insert opens the in-game settings menu.',
 APP_DEFAULTS = {'game_dir': '', 'game_dir_u1': '', 'game_dir_u2': '', 'game_dir_u3': '', 'user_dir': '', 'start': 'u1', 'language': '1', 'player_name': '',
                 'fullscreen': False, 'present_mode': 'Mailbox', 'frame_rate': '60', 'show_fps': False,
                 'window_size': '1920x1080', 'scaler': 'fsr1', 'sharpening': '500',
-                'anti_aliasing': 'off', 'aa_sharpness': '0.2', 'frame_generation': 'off',
+                'anti_aliasing': 'off', 'aa_preset': '', 'aa_sharpness': '0.2', 'frame_generation': 'off',
                 'frame_gen_multiplier': '2', 'extra_env': '', 'close_on_play': False,
                 'mouse_look': True, 'mouse_sensitivity': '1.0', 'mouse_invert_y': False,
                 'pad_invert_y': False, 'key_bindings': {}, 'pad_bindings': {}, 'check_updates': True}
@@ -349,6 +362,15 @@ def game_environment(s, start=None):
         env['BB_RCAS_ATTENUATION'] = sharpening
     env['BB_UPSCALER'] = str(s.get('anti_aliasing') or 'off')
     env['BB_FSR_SHARPNESS'] = str(s.get('aa_sharpness') or '0')
+    # '' leaves the preset saved by the in-game menu alone; a choice pins render resolution
+    # for this launch (BB_UPSCALE_PRESET) and, for a scaled preset, lets Uncharted's
+    # velocity-mode camera use it (BB_SR_VELOCITY).
+    preset = str(s.get('aa_preset') or '')
+    if preset in AA_SR_VELOCITY:
+        if preset:
+            env['BB_UPSCALE_PRESET'] = preset
+        if AA_SR_VELOCITY[preset]:
+            env['BB_SR_VELOCITY'] = AA_SR_VELOCITY[preset]
     env['BB_FRAME_GEN'] = str(s.get('frame_generation') or 'off')
     env['BB_FRAME_GEN_MULTIPLIER'] = str(s.get('frame_gen_multiplier') or '2')
     for item in str(s['extra_env']).split():
@@ -1025,9 +1047,16 @@ class Launcher:
         self.section(f, _('Anti-aliasing'))
         modes = ANTI_ALIASING + ([FSR411] if fsr411_assets() else [])
         self.row(f, _('Anti-aliasing'), self.choice(f, 'anti_aliasing', modes, 34),
-                 _('Temporal anti-aliasing at the games\' 1920 × 1080, with their own motion vectors: '
-                   'smoother edges and less shimmering than the games\' own. DLSS needs a GeForce RTX; '
-                   'FSR 4 runs best on a Radeon RX 7000/9000 or a GeForce RTX 40/50.'))
+                 _('Temporal reconstruction with the games\' own motion vectors: smoother edges and '
+                   'less shimmering than the games\' own. Native AA keeps 1920 × 1080; a preset '
+                   'below renders smaller and reconstructs 1920 × 1080. DLSS needs a GeForce RTX '
+                   '(Super Resolution works on RTX 20 series and newer); FSR 4 runs best on a '
+                   'Radeon RX 7000/9000 or a GeForce RTX 40/50.'))
+        self.row(f, _('Render size'), self.choice(f, 'aa_preset', AA_PRESETS, 34),
+                 _('What the upscaler renders and then reconstructs to 1920 × 1080. Quality is '
+                   '1280 × 720: DLSS Super Resolution turns that into a 1920 × 1080 image, which is '
+                   'real upscaling, unlike Native AA. Frame generation stays off unless you choose '
+                   'it below.'))
         self.row(f, _('Anti-aliasing sharpness'), self.choice(f, 'aa_sharpness', AA_SHARPNESS, 34))
         self.section(f, _('Frame generation'))
         hint = _('Frames made between two of the game\'s, for smoother motion: 60 FPS shows as 120. '

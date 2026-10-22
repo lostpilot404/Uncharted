@@ -56,7 +56,10 @@ Problems
 
 Upscaling
 - DLSS: NVIDIA GeForce RTX 20 series or newer with a current driver (Graphics -> Upscaler ->
-  DLSS, or the in-game menu). On other GPUs the option is greyed out.
+  DLSS, or the in-game menu). On other GPUs the option is greyed out. DLSS Super Resolution
+  also needs a preset above Native AA (see docs/dlss-sr.md): Native AA is DLAA at 1080p, a
+  preset makes the game render smaller and DLSS rebuild the 1080p image. Frame generation is
+  a separate option and stays off unless it is chosen.
 - FSR 3.1 works on every GPU. FSR 4 needs its assets in fsr4_shaders\ (included in this
   package, or Graphics -> "Download FSR 4 assets"); GPUs without the required shader features
   fall back to FSR 3.1 by themselves.

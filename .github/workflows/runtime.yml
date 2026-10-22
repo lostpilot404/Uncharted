@@ -83,6 +83,11 @@ jobs:
           try content out/content-test
           try compile-coroutine-frames clang++ -std=c++20 -O0 -g -Wall -Wextra -Werror tests/test_coroutine_frames.cpp -o out/coroutine-frames-test
           try coroutine-frames out/coroutine-frames-test
+          # Upscaler settings + DLSS SR rules: both are plain C++20, no Vulkan or GPU needed.
+          try compile-upscaler-support clang++ -std=c++20 -O2 -g -Wall -Wextra -Werror -Igpu/shim -Igpu/shadps4 tests/test_upscaler_support.cpp gpu/shim/bbport_settings.cpp -o out/upscaler-support-test
+          try upscaler-support out/upscaler-support-test
+          try compile-dlss-sr clang++ -std=c++20 -O2 -g -Wall -Wextra -Werror -Igpu/shim -Igpu/shadps4 tests/test_dlss_sr.cpp gpu/shim/bbport_settings.cpp -o out/dlss-sr-test
+          try dlss-sr out/dlss-sr-test
       - name: Python test suite
         shell: msys2 {0}
         run: |

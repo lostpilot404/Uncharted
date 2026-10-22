@@ -572,6 +572,12 @@ impl LauncherApp {
                 ["off", "taa", "fsr3", "fsr4", "fsr411", "dlss"].as_slice(),
             ),
             (
+                // "" keeps the in-game menu's preset; "0" is Native AA (DLAA, no upscaling).
+                "Render size",
+                "aa_preset",
+                ["", "0", "1", "2", "3", "4"].as_slice(),
+            ),
+            (
                 "AA sharpness",
                 "aa_sharpness",
                 ["0", "0.2", "0.4", "0.7"].as_slice(),
@@ -594,6 +600,7 @@ impl LauncherApp {
                 "scaler" => &mut self.settings.scaler,
                 "sharpening" => &mut self.settings.sharpening,
                 "anti_aliasing" => &mut self.settings.anti_aliasing,
+                "aa_preset" => &mut self.settings.aa_preset,
                 "aa_sharpness" => &mut self.settings.aa_sharpness,
                 "frame_generation" => &mut self.settings.frame_generation,
                 _ => &mut self.settings.frame_gen_multiplier,

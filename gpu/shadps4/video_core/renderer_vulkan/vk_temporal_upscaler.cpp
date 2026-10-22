@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "video_core/renderer_vulkan/dlss_sr.h"
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "video_core/renderer_vulkan/motion_history.h"
@@ -295,12 +296,19 @@ bool TemporalUpscaler::OnFrameStart() {
     const auto& settings = BbSettings::Get();
     // The guest's startup resolution patch remains in effect until restart. Keep the FSR
     // model at the applied preset while the menu saves the requested one for run.sh.
-    // Velocity mode (Uncharted) runs at the game's own size: anti-aliasing (Native AA) only.
-    const int preset = camera_motion.VelocityMode() ? 0 : BbSettings::RenderPreset();
+    // Velocity mode (Uncharted) used to run at the game's own size (Native AA only), which left
+    // DLSS with nothing to upscale (DLAA only). Auto allows a scaled preset for DLSS Super
+    // Resolution; BB_SR_VELOCITY / sr_velocity make it unconditional or turn it off.
+    const int upscaler = settings.upscaler.load();
+    const bool velocity = camera_motion.VelocityMode();
+    const int requested = BbSettings::RenderPreset();
+    const int preset = BbSettings::VelocityScaledPreset(velocity, settings.sr_velocity.load(),
+                                                        upscaler, requested)
+                           ? requested
+                           : 0;
     if (applied_preset != preset || settings.upscaler == BbSettings::UpscalerOff) failed = false;
     const bool active = Active();
     const bool jitter_on = active && settings.jitter && !BbToggle::Disabled(1u << 25);
-    const int upscaler = settings.upscaler.load();
     const int output =
         camera_motion.VelocityMode() ? BbSettings::OutputDefault : settings.output_res.load();
     const bool output_changed = !scaled_session && applied_output != output;
@@ -330,6 +338,15 @@ bool TemporalUpscaler::OnFrameStart() {
     }
     BbSettings::Get().active_render_width = Scaled() ? render_width : scene_targets.Size().width;
     BbSettings::Get().active_render_height = Scaled() ? render_height : scene_targets.Size().height;
+    if (changed && active && UseDlss()) {
+        // The sizes actually in use, so a log alone proves SR (smaller input) vs DLAA (equal).
+        const auto in = scaled_session ? SceneResolution::Size{target_width, target_height}
+                                       : scene_targets.Size();
+        std::printf("Upscaler: DLSS %s, render %ux%u -> output %ux%u%s\n",
+                    DlssSr::NameForPreset(preset), in.width, in.height, target_width,
+                    target_height,
+                    in.width < target_width ? "" : " (DLAA: native resolution)");
+    }
     if (changed || !dispatched_last_frame) reset = true;
     if (changed) jitter_index = 0;
     applied_preset = preset;

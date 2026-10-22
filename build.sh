@@ -102,11 +102,18 @@ if [[ ${1:-} == --test ]]; then
     out/sema-test
     "$CC" -std=c11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -I. -Isrc tests/test_content.c src/runtime_content.c -o out/content-test
     out/content-test
-    # Coroutine frame lifetime (liverpool.cpp nested indirect buffers): the host-heap leak
-    # regression. C++20; runs where a host compiler exists (MSYS2 CLANG64 has clang++).
+    # C++20 host tests. They run wherever a host compiler exists (MSYS2 CLANG64 has clang++).
     cxx=${CXX:-$(command -v clang++ || command -v g++ || command -v c++ || true)}
     if [[ -n $cxx ]]; then
+        # Coroutine frame lifetime (liverpool.cpp nested indirect buffers): the host-heap leak
+        # regression.
         "$cxx" -std=c++20 -O0 -g -Wall -Wextra -Werror tests/test_coroutine_frames.cpp -o out/coroutine-frames-test
         out/coroutine-frames-test
+        # Upscaler settings (saved FSR 4 choices, FSR 3.1 fallback) and DLSS SR rules (preset ->
+        # render size -> NGX quality, velocity-mode gate, frame generation stays off). No GPU.
+        "$cxx" -std=c++20 -O2 -g -Wall -Wextra -Werror -Igpu/shim -Igpu/shadps4 tests/test_upscaler_support.cpp gpu/shim/bbport_settings.cpp -o out/upscaler-support-test
+        out/upscaler-support-test
+        "$cxx" -std=c++20 -O2 -g -Wall -Wextra -Werror -Igpu/shim -Igpu/shadps4 tests/test_dlss_sr.cpp gpu/shim/bbport_settings.cpp -o out/dlss-sr-test
+        out/dlss-sr-test
     fi
 fi

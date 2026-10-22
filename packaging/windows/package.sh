@@ -44,11 +44,20 @@ dest=out/stage/uncharted-windows
 rm -rf -- out/stage
 mkdir -p "$dest/bin" "$dest/launcher" "$dest/scripts"
 cp -r out/pyi-dist/Uncharted/. "$dest/"
-llvm-strip -o "$dest/Play Uncharted.exe" out/bb-play.exe
+# llvm-strip comes with the CLANG64 LLVM toolchain; copying works when it is absent.
+if command -v llvm-strip >/dev/null 2>&1; then
+    llvm-strip -o "$dest/Play Uncharted.exe" out/bb-play.exe
+else
+    cp out/bb-play.exe "$dest/Play Uncharted.exe"
+fi
 cp launcher/uncharted.ico launcher/uncharted.png "$dest/launcher/"
 # The executables without debug information (out/ keeps the symbols for crash reports).
 for exe in bb-probe.exe bb-gpu-capabilities.exe; do
-    llvm-strip --strip-debug -o "$dest/bin/$exe" "out/$exe"
+    if command -v llvm-strip >/dev/null 2>&1; then
+        llvm-strip --strip-debug -o "$dest/bin/$exe" "out/$exe"
+    else
+        cp "out/$exe" "$dest/bin/$exe"
+    fi
 done
 # Every DLL the executables load from the CLANG64 tree (SDL3, FFmpeg, Vulkan loader, ...).
 ldd "$dest/bin/bb-probe.exe" "$dest/bin/bb-gpu-capabilities.exe" |

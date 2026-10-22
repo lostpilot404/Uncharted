@@ -10,6 +10,7 @@
 #include <optional>
 #include <string_view>
 
+#include "video_core/renderer_vulkan/dlss_sr.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
 
 #ifdef _WIN32
@@ -23,8 +24,8 @@
 namespace Vulkan {
 
 int Dlss::QualityForScale(float scale) {
-    // DLAA only for equal sizes: any real upscale needs at least the Quality mode.
-    return scale >= 2.9f ? 4 : scale >= 1.95f ? 3 : scale >= 1.65f ? 2 : scale > 1.01f ? 1 : 0;
+    // One implementation, shared with the renderer's preset plan and with tests/test_dlss_sr.cpp.
+    return DlssSr::NgxQualityForScale(scale);
 }
 
 #ifdef _WIN32

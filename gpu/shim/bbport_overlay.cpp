@@ -248,6 +248,30 @@ void Menu() {
         ImGui::EndCombo();
     }
     ImGui::EndDisabled();
+    // Uncharted's velocity-mode sessions used to keep the game's own render size, so a preset
+    // gave DLSS nothing to upscale (DLAA only). Auto now lets DLSS Super Resolution use it.
+    {
+        static constexpr int values[] = {BbSettings::SrVelocityAuto, BbSettings::SrVelocityOn,
+                                         BbSettings::SrVelocityOff};
+        static const char* items[] = {"Авто (DLSS SR при пресете выше Native AA)",
+                                      "Вкл (DLSS, FSR 3.1, FSR 4)", "Выкл (рендер игры)"};
+        int current = 0;
+        for (int i = 0; i < 3; ++i) {
+            if (values[i] == s.sr_velocity.load()) current = i;
+        }
+        if (ImGui::BeginCombo("Супер-разрешение (сцена меньше вывода)", items[current])) {
+            for (int i = 0; i < 3; ++i) {
+                if (ImGui::Selectable(items[i], i == current)) {
+                    Store(s.sr_velocity, values[i], true);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        Hint("В Uncharted камера задаёт собственный размер кадра: с «Выкл» пресет не меняет "
+             "рендер и DLSS работает как DLAA в разрешении вывода. «Авто» включает пресет для "
+             "DLSS Super Resolution (рендер 1280x720 -> 1920x1080 при Quality), остальные "
+             "апскейлеры остаются как раньше. «Вкл» разрешает пресет и FSR 3.1/4.");
+    }
     if (taa) {
         ImGui::TextWrapped("TAA сглаживает сцену в разрешении вывода, без модели FSR и апскейлинга. "
                            "Сохранённый пресет FSR восстановится при выборе FSR.");
