@@ -9,6 +9,11 @@
 // build.sh --test. Hardware behaviour is NOT covered here - see docs/dlss-sr.md.
 
 #include <cassert>
+// The checks below are assert()s: a build with NDEBUG would report success without running
+// them, so refuse to build that way (build.sh, CI and the CMake targets do not define it).
+#ifdef NDEBUG
+#error "build the tests without NDEBUG: they assert"
+#endif
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -129,6 +134,14 @@ int main() {
 
     // --- 6. Settings: provider support, BB_UPSCALE_PRESET, BB_SR_VELOCITY, frame generation --
     using namespace BbSettings;
+    // Fresh defaults, independent of what any earlier Load() left in the singleton: a default of
+    // "on" would silently let FSR 3.1/4 scale in Uncharted, and an inverted depth default would
+    // feed NGX the wrong depth.
+    {
+        const Values defaults{};
+        assert(defaults.sr_velocity.load() == SrVelocityAuto);
+        assert(!defaults.dlss_depth_inverted.load());
+    }
     // SR-capable providers only.
     assert(SupportsSuperResolution(UpscalerDlss));
     assert(SupportsSuperResolution(UpscalerFsr3));
@@ -188,19 +201,23 @@ int main() {
     assert(MakePlan(1920, 1080, NativeAA).Upscales() == false);
     assert(s.frame_gen == FrameGenOff);
 
-    // The depth convention is on by default (the games write reversed-Z) and can be changed.
-    assert(s.dlss_depth_inverted);
-    TestEnv::Set("BB_DLSS_DEPTH_INVERTED", "0");
-    Load();
-    assert(!s.dlss_depth_inverted);
+    // Depth: D3D convention by default (0 at the near plane); the inverted flag is opt-in,
+    // takes effect from the environment, and is saved so a restart keeps the choice.
+    assert(!s.dlss_depth_inverted); // bbport.ini has no depth line yet
     TestEnv::Set("BB_DLSS_DEPTH_INVERTED", "1");
     Load();
     assert(s.dlss_depth_inverted);
     TestEnv::Unset("BB_DLSS_DEPTH_INVERTED");
-    Save(); // saved, so a restart keeps the choice
-    s.dlss_depth_inverted = false;
+    Save();                        // persists 1
+    s.dlss_depth_inverted = false; // as if the process had never seen it
     Load();
-    assert(s.dlss_depth_inverted);
+    assert(s.dlss_depth_inverted); // read back from bbport.ini
+    TestEnv::Set("BB_DLSS_DEPTH_INVERTED", "0");
+    Load();                        // back to the D3D default for the rest of the test
+    assert(!s.dlss_depth_inverted);
+    TestEnv::Unset("BB_DLSS_DEPTH_INVERTED");
+    TestEnv::Set("BB_CONFIG", path);
+    Save();
 
     // TAA is native-resolution by construction: an SR preset must not be applied to it.
     s.upscaler = UpscalerTaa;

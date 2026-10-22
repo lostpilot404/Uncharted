@@ -215,8 +215,9 @@ bool Dlss::CreateFeature(vk::CommandBuffer command, const FeatureDesc& desc) {
         return false;
     }
     impl->feature.reset();
-    // The render-preset letter stays at 0 (the SDK's own default for the quality class);
-    // the depth convention is the games' reversed-Z, overridable for validation on a GPU.
+    // The render-preset letter stays at 0 (the SDK's own default for the quality class).
+    // The games write D3D depth (0 at the near plane, sky 1.0), so DepthInverted is off; the
+    // setting exists to try the opposite convention on a GPU (see bbport_settings.h).
     BbDlssFeature feature{};
     feature.input_width = desc.input_width;
     feature.input_height = desc.input_height;

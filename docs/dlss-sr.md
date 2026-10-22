@@ -69,9 +69,13 @@ size, so the two cannot drift apart.
 jitter, in the layout FSR 3.1 already used:
 
 - colour: the scene proxy, `R16G16B16A16Sfloat`, top-left `w × h` of the aligned target;
-- depth: the scene depth proxy at the same size, flagged reversed-Z (the convention these games
-  write; `BB_DLSS_DEPTH_INVERTED=0` / `dlss_depth_inverted=0` flips it if reprojection looks
-  wrong on a machine — it is the one input no CI runner could confirm);
+- depth: the scene depth proxy at the same size, in the games' own D3D convention — 0 at the
+  near plane, 1.0 for the sky (`docs/upscaler.md`: projection z scale `1.00002`, offset
+  `-0.0500679`, near 0.05; `camera_motion.comp` treats `depth >= 1.0` as sky). `DepthInverted`
+  is therefore **off**, matching the FSR 3.1 path and the frame generator's own default.
+  `BB_DLSS_DEPTH_INVERTED=1` / `dlss_depth_inverted=1` is the opt-in for a machine that shows
+  the opposite convention — next to motion-vector sign it is the only DLSS input a CI runner
+  cannot confirm;
 - motion: `R16G16Sfloat`, render-resolution pixels, current → previous; toggle `1 << 26`
   flips the sign for a build or driver with the opposite convention;
 - jitter: the pattern FSR 3.1 uses, in render pixels (toggle `1 << 25` turns jitter off),
@@ -136,8 +140,10 @@ are unverified until someone runs them.
 4. Set *Render size* to *Native AA*: the log switches to `render 1920x1080 ... (DLAA: native
    resolution)` — DLAA is not upscaling.
 5. Compare frame time and image quality against FSR 3.1 Quality at the same output size. If
-   edges smear or ghost, try `BB_DLSS_DEPTH_INVERTED=0` and report which one was better: the
-   depth convention is the only DLSS input CI cannot check.
+   edges smear or ghost, try `BB_DLSS_DEPTH_INVERTED=1` (restart) and report which was better:
+   the depth convention is one of the two DLSS inputs CI cannot check. The other is the
+   motion-vector sign: it is fixed at current → previous and can only be flipped with the
+   internal debug toggle bit `1 << 26` (`bbport_toggles.h`), not from the launcher.
 6. The DLSS render-preset letter (A..K) stays at the SDK default for the quality class; only
    the quality class is chosen by the preset.
 7. Confirm Frame generation stayed off: the menu's frame-generation entry is *Выкл*, and the

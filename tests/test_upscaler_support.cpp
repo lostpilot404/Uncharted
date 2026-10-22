@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Saved FSR 4 choices must be safe before the first rendered frame on older GPUs.
 #include <cassert>
+// The checks below are assert()s: a build with NDEBUG would report success without running
+// them, so refuse to build that way (build.sh, CI and the CMake targets do not define it).
+#ifdef NDEBUG
+#error "build the tests without NDEBUG: they assert"
+#endif
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>

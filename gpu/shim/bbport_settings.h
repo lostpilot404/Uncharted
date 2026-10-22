@@ -109,9 +109,12 @@ struct Values {
     /// Why FSR 4 cannot run (assets, device features), or null. Set by the renderer.
     std::atomic<const char*> fsr4_problem{nullptr};
     std::atomic<bool> fsr4_supported{false}, fsr411_supported{false};
-    /// DLSS depth convention: the games write reversed-Z (1 = near). Exposed because only a
-    /// GPU can confirm it (BB_DLSS_DEPTH_INVERTED / dlss_depth_inverted in bbport.ini).
-    std::atomic<bool> dlss_depth_inverted{true};
+    /// DLSS depth convention. The games write D3D depth, 0 at the near plane and 1.0 for the
+    /// sky (docs/upscaler.md: projection z scale 1.00002 / offset -0.0500679, near 0.05), and
+    /// FSR 3.1 and the frame-generation path already assume the same, so DepthInverted stays
+    /// off. BB_DLSS_DEPTH_INVERTED=1 / dlss_depth_inverted=1 exists only to test the opposite
+    /// convention on a GPU, which is the one input CI cannot check.
+    std::atomic<bool> dlss_depth_inverted{false};
     /// DLSS (bbport_dlss.dll, NVIDIA RTX) is ready, or why not (null before the device exists).
     std::atomic<bool> dlss_supported{false};
     std::atomic<const char*> dlss_problem{nullptr};
