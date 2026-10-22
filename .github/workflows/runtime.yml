@@ -87,9 +87,15 @@ jobs:
         shell: msys2 {0}
         run: |
           if ! out=$(python -m unittest discover -s tests -p 'test_*.py' 2>&1); then
-            printf '%s\n' "$out" | tail -30 | while IFS= read -r line; do
-              echo "::error title=unittest::$line"
-            done
+            printf '%s' "$out" | sed $'s/\x1b\\[[0-9;]*m//g' | \
+              awk 'BEGIN{ORS=""}
+                   /^FAIL:|^ERROR:|AssertionError|CalledProcessError|Traceback|^Ran |^FAILED|^OK/ { cap = 12 }
+                   cap > 0 { errs = errs $0 "\n"; cap--; next }
+                   END {
+                     line = errs
+                     gsub(/%/, "%25", line); gsub(/\r/, "%0D", line); gsub(/\n/, "%0A", line)
+                     print "::error title=unittest::" line "\n"
+                   }'
             exit 1
           fi
           printf '%s\n' "$out" | grep -E '^(OK|FAILED|Ran )'

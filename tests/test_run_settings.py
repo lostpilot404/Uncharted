@@ -69,8 +69,12 @@ class RestartResolutionTests(unittest.TestCase):
                 for name in ('bash', 'dirname', 'mkdir', 'realpath'):
                     (tools / name).symlink_to(shutil.which(name))
                 env['PATH'] = str(tools)
-            subprocess.run([shutil.which('bash'), 'run.sh'], cwd=ROOT, env=env,
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=30)
+            result = subprocess.run([shutil.which('bash'), 'run.sh'], cwd=ROOT, env=env,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            if result.returncode:
+                self.fail(f'run.sh exited {result.returncode}\nstdout:\n'
+                          f'{result.stdout.decode(errors="replace")}\nstderr:\n'
+                          f'{result.stderr.decode(errors="replace")}')
             return [json.loads(line) for line in (data / 'environments').read_text().splitlines()]
 
     def test_outputs_other_than_1080p_patch_the_render_size_and_restarts_recompute_it(self):
@@ -97,6 +101,8 @@ class RestartResolutionTests(unittest.TestCase):
         self.assertEqual(self.run_restarts(ini_extra='live_resolution=auto\n', caps=0)[0]['BB_RENDER_RES'],
                          '854x480')
 
+    @unittest.skipIf(sys.platform == 'win32',
+                     'AppImage PATH scenario: a dir of POSIX coreutils symlinks')
     def test_live_resolution_without_sed_or_grep(self):
         # A missing sed ended run.sh (exit 127) before the game in the AppImage on NixOS.
         self.assertEqual(self.run_restarts(ini_extra='live_resolution=0\n', caps=1,
