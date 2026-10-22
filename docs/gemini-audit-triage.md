@@ -3,7 +3,8 @@
 Status: read-only audit complete, one confirmed defect fixed and tested.
 Branch: `arena/3219e6b1-uncharted`
 Baseline commit: `5fe65e3697ee2f4a739a8793cd21ed8fdc2a42af`
-Fix commit: `05647f1ccfc137ac7ecc4fc0e41c5a93f83ae40b`
+Fix commit: `05647f1ccfc137ac7ecc4fc0e41c5a93f83ae40b` (CI notice follow-up: `bf2f7db`)
+Pull request: [#6](https://github.com/lostpilot404/Uncharted/pull/6) — open, not merged
 
 This document triages every entry of the supplied `Gemini.md` (3,696 lines, 11,750 words,
 24 ledger entries, 4 supplemental fix sections) against the **current** source, the historical
@@ -801,13 +802,37 @@ aborted run. TSan is **not** wired into CI; this is a one-off verification.
 
 ## 10. CI
 
-No workflow was triggered from this sandbox: `git push` is intentionally not performed, and the
-mission forbids merging. The commit `05647f1` is local. When it is pushed to
-`arena/3219e6b1-uncharted`, `.github/workflows/runtime.yml` will additionally run
-`compile-mutex-cond` / `mutex-cond` on `windows-latest` (MSYS2 CLANG64), and Windows package and
-Rust launcher CI will run unchanged. The expected new notice is
-`standalone-test::mutex-cond-test ran and passed`. That must be verified on the actual run before
-being reported as green — it has **not** been.
+The branch was pushed and PR #6 opened (`https://github.com/lostpilot404/Uncharted/pull/6`,
+base `main`, head `arena/3219e6b1-uncharted`) so the new test step could be exercised on real
+Windows rather than merely predicted. Nothing was merged.
+
+Run for head `bf2f7db` (commit "ci: emit notices for content-test and the new mutex-cond test"):
+
+| Workflow | Run | Result |
+|---|---|---|
+| Runtime CI | https://github.com/lostpilot404/Uncharted/actions/runs/39803863080 | **success**, 11m21s |
+| Rust launcher CI | https://github.com/lostpilot404/Uncharted/actions/runs/39803863255 | **success**, 5m54s |
+| Windows package | https://github.com/lostpilot404/Uncharted/actions/runs/39803863210 | still running when this report was written; it runs `bash build.sh` without `--test`, so the only edited shell lines are not executed in it |
+
+The runtime job's "Build the Windows runtime (MSYS2 CLANG64)" step succeeded, so `src/runtime_mutex.c`
+**compiles on the target toolchain** with the project's `-Werror` policy. The "Standalone tests"
+step then reported, as API-readable annotations:
+
+```
+notice: mutex-cond-test ran and passed (destroyed cond handles reported, statistics race-free)
+notice: content-test ran and passed
+notice: coroutine-frames-test ran and passed
+notice: dlss-sr-test ran and passed (presets, resolution plan, velocity-mode gate, provider selection and frame-generation independence)
+notice: upscaler-support-test ran and passed
+notice: test_file_mods skipped: POSIX fixture (Linux/Nix only)
+```
+
+and the "Python test suite" step passed as well (the workflow fails the job unless the suite exits
+0 and prints `OK`). This is the first time the mutex/condition-variable subsystem has had a Windows
+CI signal; before this change the step did not build any test for it.
+
+Still absent and unchanged by this work: `pad-test`, `sema-test` and `runtime-test` are built by
+`build.sh --test` on Linux but not by the Windows workflow (§4.5).
 
 ---
 
