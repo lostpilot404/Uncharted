@@ -93,6 +93,10 @@ jobs:
           echo "::notice title=standalone-test::test_file_mods skipped: POSIX fixture (Linux/Nix only)"
           try compile-content clang -std=c11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -I. -Isrc tests/test_content.c src/runtime_content.c -o out/content-test
           try content out/content-test
+          # Guest mutex/cond handle lifetime (destroyed handles reported, never re-created) and
+          # the statistics shared by every guest thread. Plain C11 + pthreads: no GPU, SDL, FFmpeg.
+          try compile-mutex-cond clang -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -Isrc tests/test_mutex_cond.c -o out/mutex-cond-test
+          try mutex-cond out/mutex-cond-test
           try compile-coroutine-frames clang++ -std=c++20 -O0 -g -Wall -Wextra -Werror tests/test_coroutine_frames.cpp -o out/coroutine-frames-test
           try coroutine-frames out/coroutine-frames-test
           # Upscaler settings + DLSS SR rules: both are plain C++20, no Vulkan or GPU needed.

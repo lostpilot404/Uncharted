@@ -6,10 +6,16 @@
 #include <string.h>
 #include <pthread.h>
 #include <errno.h>
+#include <stdatomic.h>
 #include <time.h>
 typedef struct { int type; } GuestAttr;
 typedef struct { pthread_mutex_t native; } GuestMutex;
-static size_t created, locks, unlocks;
+/* Statistics are updated by guest threads and read by runtime_mutex_report() from another
+ * thread: plain ++ would be a data race, so they are atomic and read atomically. */
+static _Atomic size_t created, locks, unlocks;
+static void counted(_Atomic size_t *counter) {
+    atomic_fetch_add_explicit(counter, 1, memory_order_relaxed);
+}
 static int32_t orbis_error(int e) {
     if (!e) return 0;
     unsigned code;
@@ -58,7 +64,7 @@ static ABI int32_t mutex_init(GuestMutex **out, GuestAttr **attr, const char *na
     if (!e) e = pthread_mutex_init(&mutex->native, &native_attr);
     pthread_mutexattr_destroy(&native_attr);
     if (e) { free(mutex); return orbis_error(e); }
-    *out = mutex; ++created; return 0;
+    *out = mutex; counted(&created); return 0;
 }
 static pthread_mutex_t static_init = PTHREAD_MUTEX_INITIALIZER;
 /* Statically initialized handles (0/1) are created once, even under contention. */
@@ -81,21 +87,21 @@ static ABI int32_t mutex_lock(GuestMutex **mutex) {
     int32_t e = ensure_mutex(mutex);
     if (e) return e;
     e = orbis_error(pthread_mutex_lock(&(*mutex)->native));
-    if (!e) ++locks;
+    if (!e) counted(&locks);
     return e;
 }
 static ABI int32_t mutex_trylock(GuestMutex **mutex) {
     int32_t e = ensure_mutex(mutex);
     if (e) return e;
     e = orbis_error(pthread_mutex_trylock(&(*mutex)->native));
-    if (!e) ++locks;
+    if (!e) counted(&locks);
     return e;
 }
 static ABI int32_t mutex_unlock(GuestMutex **mutex) {
     if (!mutex || (uintptr_t)*mutex == 2) return orbis_error(EINVAL);
     if ((uintptr_t)*mutex < 2) return orbis_error(EPERM);
     int32_t e = orbis_error(pthread_mutex_unlock(&(*mutex)->native));
-    if (!e) ++unlocks;
+    if (!e) counted(&unlocks);
     return e;
 }
 static ABI int32_t mutex_destroy(GuestMutex **mutex) {
@@ -119,13 +125,13 @@ static ABI int32_t mutex_timedlock(GuestMutex **mutex, uint32_t usec) {
     struct timespec end;
     if (deadline_after(&end, usec)) return orbis_error(EINVAL);
     e = timed_error(pthread_mutex_timedlock(&(*mutex)->native, &end));
-    if (!e) ++locks;
+    if (!e) counted(&locks);
     return e;
 }
 /* Condition variables: opaque handles over host pthread_cond (CLOCK_REALTIME,
  * like FreeBSD's default), sharing the host mutex behind GuestMutex. */
 typedef struct { pthread_cond_t native; } GuestCond;
-static size_t conds, waits, wakeups;
+static _Atomic size_t conds, waits, wakeups;
 static ABI int32_t cond_init(GuestCond **out, void **attr, const char *name) {
     (void)attr; (void)name;
     if (!out) return orbis_error(EINVAL);
@@ -133,11 +139,15 @@ static ABI int32_t cond_init(GuestCond **out, void **attr, const char *name) {
     if (!c) return orbis_error(ENOMEM);
     int e = pthread_cond_init(&c->native, NULL);
     if (e) { free(c); return orbis_error(e); }
-    *out = c; ++conds; return 0;
+    *out = c; counted(&conds); return 0;
 }
+/* Destroyed handles carry the same sentinel as mutex_destroy (2), so a guest that manages to
+ * use a condition variable after destroying it gets EINVAL instead of a silently live one. */
 static int32_t ensure_cond(GuestCond **cond) {
     if (!cond) return orbis_error(EINVAL);
-    if (__atomic_load_n((uintptr_t *)cond, __ATOMIC_ACQUIRE) >= 2) return 0;
+    uintptr_t value = __atomic_load_n((uintptr_t *)cond, __ATOMIC_ACQUIRE);
+    if (value == 2) return orbis_error(EINVAL);
+    if (value > 2) return 0;
     pthread_mutex_lock(&static_init);
     int32_t e = 0;
     if ((uintptr_t)*cond < 2) {
@@ -149,24 +159,24 @@ static int32_t ensure_cond(GuestCond **cond) {
     return e;
 }
 static ABI int32_t cond_destroy(GuestCond **cond) {
-    if (!cond) return orbis_error(EINVAL);
+    if (!cond || (uintptr_t)*cond == 2) return orbis_error(EINVAL);
     if ((uintptr_t)*cond < 2) return 0;
     int e = pthread_cond_destroy(&(*cond)->native);
-    if (!e) { free(*cond); *cond = NULL; }
+    if (!e) { free(*cond); *cond = (GuestCond *)(uintptr_t)2; }
     return orbis_error(e);
 }
 static ABI int32_t cond_wait(GuestCond **cond, GuestMutex **mutex) {
     int32_t e = ensure_cond(cond);
     if (e) return e;
     if (!mutex || (uintptr_t)*mutex < 3) return orbis_error(EINVAL);
-    ++waits;
+    counted(&waits);
     return orbis_error(pthread_cond_wait(&(*cond)->native, &(*mutex)->native));
 }
 static int32_t cond_wait_until(GuestCond **cond, GuestMutex **mutex, const struct timespec *end) {
     int32_t e = ensure_cond(cond);
     if (e) return e;
     if (!mutex || (uintptr_t)*mutex < 3 || !end) return orbis_error(EINVAL);
-    ++waits;
+    counted(&waits);
     return timed_error(pthread_cond_timedwait(&(*cond)->native, &(*mutex)->native, end));
 }
 static ABI int32_t cond_timedwait(GuestCond **cond, GuestMutex **mutex, uint32_t usec) {
@@ -177,12 +187,12 @@ static ABI int32_t cond_timedwait(GuestCond **cond, GuestMutex **mutex, uint32_t
 static ABI int32_t cond_signal(GuestCond **cond) {
     int32_t e = ensure_cond(cond);
     if (e) return e;
-    ++wakeups; return orbis_error(pthread_cond_signal(&(*cond)->native));
+    counted(&wakeups); return orbis_error(pthread_cond_signal(&(*cond)->native));
 }
 static ABI int32_t cond_broadcast(GuestCond **cond) {
     int32_t e = ensure_cond(cond);
     if (e) return e;
-    ++wakeups; return orbis_error(pthread_cond_broadcast(&(*cond)->native));
+    counted(&wakeups); return orbis_error(pthread_cond_broadcast(&(*cond)->native));
 }
 /* PS4 struct timespec is {int64 sec, int64 nsec}, identical to Linux x86-64. */
 typedef struct { int64_t sec, nsec; } GuestTimespec;
@@ -257,7 +267,13 @@ uintptr_t runtime_mutex_resolve(const char *name) {
     return 0;
 }
 void runtime_mutex_report(void) {
-    printf("Runtime: mutexes created=%zu, locks=%zu, unlocks=%zu\n", created, locks, unlocks);
-    printf("Runtime: condition variables created=%zu, waits=%zu, wakeups=%zu\n", conds, waits, wakeups);
+    printf("Runtime: mutexes created=%zu, locks=%zu, unlocks=%zu\n",
+           atomic_load_explicit(&created, memory_order_relaxed),
+           atomic_load_explicit(&locks, memory_order_relaxed),
+           atomic_load_explicit(&unlocks, memory_order_relaxed));
+    printf("Runtime: condition variables created=%zu, waits=%zu, wakeups=%zu\n",
+           atomic_load_explicit(&conds, memory_order_relaxed),
+           atomic_load_explicit(&waits, memory_order_relaxed),
+           atomic_load_explicit(&wakeups, memory_order_relaxed));
 }
 
