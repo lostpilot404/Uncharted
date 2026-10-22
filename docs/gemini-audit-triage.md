@@ -3,7 +3,8 @@
 Status: read-only audit complete, one confirmed defect fixed and tested.
 Branch: `arena/3219e6b1-uncharted`
 Baseline commit: `5fe65e3697ee2f4a739a8793cd21ed8fdc2a42af`
-Fix commit: `05647f1ccfc137ac7ecc4fc0e41c5a93f83ae40b` (CI notice follow-up: `bf2f7db`)
+Fix commit: `05647f1ccfc137ac7ecc4fc0e41c5a93f83ae40b` (CI notice follow-up: `bf2f7db`;
+test-harness follow-up: `595aea4`)
 Pull request: [#6](https://github.com/lostpilot404/Uncharted/pull/6) — open, not merged
 
 This document triages every entry of the supplied `Gemini.md` (3,696 lines, 11,750 words,
@@ -754,8 +755,10 @@ Every changed line compiles with `-Wall -Wextra -Werror` on gcc 12. No new warni
 
 ### 9.3 Mutation check — the new test really detects the old behaviour
 
-The pre-change `runtime_mutex.c` was restored into a scratch tree (`/tmp/prefix-check2`) with the
-new test compiled against it (the counter reads adapted to plain `size_t`):
+The pre-change `runtime_mutex.c` was taken verbatim from the baseline commit
+(`git show 5fe65e3:src/runtime_mutex.c`, sha256 `b1d46a0a7c5e051…`) into a scratch tree, with the
+new test compiled against it (only the counter *reads* adapted to plain `size_t`, so the TU
+compiles). Re-run after the harness fix in §9.4(b), with the same result:
 
 ```
 $ ./pre-fix
@@ -777,26 +780,62 @@ handle the guest believes is dead.
 
 ### 9.4 Concurrency evidence (ThreadSanitizer)
 
+TSan is **not** wired into CI; all of the following are one-off runs, and each build ran to
+completion, so the reports are attributable to the sources rather than to an aborted run.
+
+**(a) The production counter race.** A probe that does what a live process does — guest threads
+locking while `runtime_mutex_report()` prints from the main thread — compiled against the exact
+pre-fix source (`git show 5fe65e3:src/runtime_mutex.c`, sha256 `b1d46a0a…`):
+
 ```
-$ gcc -std=c11 -O1 -g -pthread -fsanitize=thread <demo.c> -o demo-tsan     # pre-fix source
+$ gcc -std=c11 -O1 -g -pthread -fsanitize=thread -Isrc prodrace.c -o prodrace-prefix
+$ ./prodrace-prefix ; echo $?
 WARNING: ThreadSanitizer: data race
-SUMMARY: ThreadSanitizer: data race /tmp/prefix-check/src/runtime_mutex.c:98 in mutex_unlock
+SUMMARY: ThreadSanitizer: data race src/runtime_mutex.c:98 in mutex_unlock
+SUMMARY: ThreadSanitizer: data race src/runtime_mutex.c:260 in runtime_mutex_report
+66                      # 2 races
 
-$ gcc -std=c11 -O1 -g -pthread -fsanitize=thread <demo.c> -o demo-tsan-fixed  # fixed source
-(no ThreadSanitizer output)
+$ (same probe, fixed source)
+$ ./prodrace-fixed ; echo $?
+0                       # 0 races
 ```
 
-Both sanitizer builds ran to completion, so the reports are attributable to the sources, not to an
-aborted run. TSan is **not** wired into CI; this is a one-off verification.
+So the sanitizer detects the original race in the production file, both the writer side
+(`mutex_unlock`) and the reader side (`runtime_mutex_report`), and it is gone after the fix.
+
+**(b) The test harness — a defect found in review and corrected.** Run against the test as first
+committed, TSan reported a *second*, independent race: `check_pair()`'s tally was a plain
+`static long` written by both `waiter_thread()` and `main`, because the signaller's
+`unlock` genuinely overlaps the waiter's `wait`/`unlock`.
+
+```
+$ gcc -std=c11 -O1 -g -pthread -fsanitize=thread -Isrc tests/test_mutex_cond.c -o tmc-tsan
+$ ./tmc-tsan ; echo $?
+WARNING: ThreadSanitizer: data race
+  Read of size 8 by thread T1:   #0 check_pair tests/test_mutex_cond.c:33
+                                 #1 waiter_thread tests/test_mutex_cond.c:49
+  Previous write by main thread: #0 check_pair tests/test_mutex_cond.c:33
+                                 #1 test_wait_signal_round_trip tests/test_mutex_cond.c:67
+66                      # 1 race
+```
+
+The tally is now `_Atomic long` with `atomic_fetch_add_explicit(…, relaxed)` and an atomic load
+for the report (`%ld` unchanged). Nothing else in the test changed: no assertion, case or coverage
+removed. After the change the identical TSan build reports no race and exits 0. This was a
+harness-only defect — it did not affect the printed count (300/300 runs printed `32` before,
+200/200 after), so it never masked a production result.
 
 ### 9.5 What this validation does and does not establish
 
 - Establishes: the destroyed-handle contract now matches the mutex half of the same file; the
-  statistics are race-free; the header/CI wiring is syntactically valid; the pre-existing suites
-  are unchanged; the fixed code compiles warning-free.
-- Does **not** establish: that the port builds or runs (no Vulkan/SDL/cmake here), that Windows CI
-  is green with the new test step, or anything about DLSS, motion vectors, frame generation,
-  VRAM behaviour or frame times.
+  statistics are race-free *and* so is the test that checks them; the header/CI wiring is
+  syntactically valid; the pre-existing suites are unchanged; the fixed code compiles
+  warning-free.
+- Does **not** establish: that the port builds or runs (no Vulkan/SDL/cmake here), or anything
+  about DLSS, motion vectors, frame generation, VRAM behaviour or frame times. (Windows CI with
+  the new test step is covered in §10, on the run for the exact head.)
+- TSan remains a local, one-off check. Nothing in CI runs it, so a future race in this file would
+  not be caught automatically.
 
 ---
 
