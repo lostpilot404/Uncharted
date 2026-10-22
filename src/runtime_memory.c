@@ -108,6 +108,12 @@ typedef struct { uintptr_t start, end; uint64_t phys; int mapped; } HostRegion;
 typedef struct { uintptr_t start, end; DWORD protect; } ProtRun;
 static HostRegion *regions; static size_t region_count, region_capacity;
 static HANDLE section;
+#ifdef BB_WINDOWS_MEMORY_TEST
+/* Test-only observation points. They do not exist in ordinary runtime builds. */
+void runtime_memory_test_reservation_failure(DWORD error, size_t recorded_regions);
+void runtime_memory_test_after_unmap(uintptr_t lo, uintptr_t a, uintptr_t b, uintptr_t hi);
+void runtime_memory_test_before_protection_restore(uintptr_t lo, uintptr_t a, uintptr_t b, uintptr_t hi);
+#endif
 static DWORD win_prot(int prot) {
     if (prot & PROT_EXEC) return (prot & PROT_WRITE) ? PAGE_EXECUTE_READWRITE : (prot & PROT_READ) ? PAGE_EXECUTE_READ : PAGE_EXECUTE;
     if (prot & PROT_WRITE) return PAGE_READWRITE;
@@ -138,8 +144,14 @@ static void region_erase(size_t at, size_t n) {
 /* The guest range is reserved before anything else can be placed there (runtime_start). */
 void runtime_memory_reserve(void) {
     if (region_count) return;
-    if (!VirtualAlloc2(NULL,(void *)USER_MIN,USER_MAX-USER_MIN,MEM_RESERVE|MEM_RESERVE_PLACEHOLDER,PAGE_NOACCESS,NULL,0))
+    if (!VirtualAlloc2(NULL,(void *)USER_MIN,USER_MAX-USER_MIN,MEM_RESERVE|MEM_RESERVE_PLACEHOLDER,PAGE_NOACCESS,NULL,0)) {
+#ifdef BB_WINDOWS_MEMORY_TEST
+        DWORD error=GetLastError();
+        runtime_memory_test_reservation_failure(error,region_count);
+        SetLastError(error);
+#endif
         win_fail("reserving the PS4 address range (link with --disable-high-entropy-va)",USER_MIN,USER_MAX-USER_MIN);
+    }
     region_insert(0,(HostRegion){USER_MIN,USER_MAX,0,0});
 }
 static void view_map(const HostRegion *r, DWORD protect) {
@@ -178,6 +190,10 @@ static size_t carve_host(uintptr_t a, uintptr_t b) {
         if (!UnmapViewOfFile2(GetCurrentProcess(),(void *)regions[i].start,MEM_PRESERVE_PLACEHOLDER))
             win_fail("UnmapViewOfFile2",regions[i].start,regions[i].end-regions[i].start);
     }
+#ifdef BB_WINDOWS_MEMORY_TEST
+    /* Observe the exact interval after unmapping and before any sibling view is rebuilt. */
+    runtime_memory_test_after_unmap(lo,a,b,hi);
+#endif
     if (last-first>1 && !VirtualFree((void *)lo,hi-lo,MEM_RELEASE|MEM_COALESCE_PLACEHOLDERS))
         win_fail("coalescing placeholders",lo,hi-lo);
     region_erase(first,last-first);
@@ -202,6 +218,10 @@ static size_t carve_host(uintptr_t a, uintptr_t b) {
             view_map(&regions[at+1],PAGE_READWRITE);
         }
     }
+#ifdef BB_WINDOWS_MEMORY_TEST
+    /* Separate observation of the re-created views before saved protections are restored. */
+    runtime_memory_test_before_protection_restore(lo,a,b,hi);
+#endif
     for (size_t i=0;i<nruns;++i) {
         DWORD old;
         if (runs[i].protect!=PAGE_READWRITE && !VirtualProtect((void *)runs[i].start,runs[i].end-runs[i].start,runs[i].protect,&old))
