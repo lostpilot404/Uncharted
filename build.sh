@@ -100,6 +100,9 @@ if [[ ${1:-} == --test ]]; then
     out/file-mods-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_sema.c "${runtime[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/sema-test
     out/sema-test
+    # Guest mutex/cond handle lifetime and the shared statistics: no GPU, SDL or game data.
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -Isrc tests/test_mutex_cond.c -o out/mutex-cond-test
+    out/mutex-cond-test
     "$CC" -std=c11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -I. -Isrc tests/test_content.c src/runtime_content.c -o out/content-test
     out/content-test
     # C++20 host tests. They run wherever a host compiler exists (MSYS2 CLANG64 has clang++).
