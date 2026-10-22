@@ -44,7 +44,11 @@ def host_nvidia(manifest_dirs, library_dirs):
                 continue
             if "nvidia" not in library.name.lower():
                 continue
-            if library.is_absolute():
+            # The manifest's library_path is a POSIX path (/nix/store/...). Ask
+            # POSIX semantics for absoluteness: pathlib's is_absolute() alone is
+            # host-dependent (false for '/nix/...' on Windows test hosts) and on
+            # Linux the two checks are identical.
+            if str(library).startswith("/") or library.is_absolute():
                 candidates = [library, *(d / library.name for d in library_dirs)]
             elif len(library.parts) > 1:
                 candidates = [manifest.parent / library]
