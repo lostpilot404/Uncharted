@@ -1,0 +1,109 @@
+# Windows CI for the two workstreams. Split into two workflows so each workstream
+# branch can carry only its own validation:
+#   rust-launcher.yml - the Rust launcher (fmt/tests/release build)
+#   runtime.yml       - the native runtime (documented MSYS2 CLANG64 toolchain)
+# Note: the standalone tests mirror the Linux-only `build.sh --test` block (build.sh
+# exits after the MSYS build before reaching it).
+name: Runtime CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  runtime-msys2:
+    name: Runtime (MSYS2 CLANG64 build + tests)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          update: false
+          install: >-
+            git patch
+            mingw-w64-clang-x86_64-toolchain
+            mingw-w64-clang-x86_64-cmake
+            mingw-w64-clang-x86_64-ninja
+            mingw-w64-clang-x86_64-pkgconf
+            mingw-w64-clang-x86_64-python
+            mingw-w64-clang-x86_64-vulkan-headers
+            mingw-w64-clang-x86_64-vulkan-loader
+            mingw-w64-clang-x86_64-vulkan-memory-allocator
+            mingw-w64-clang-x86_64-glslang
+            mingw-w64-clang-x86_64-sdl3
+            mingw-w64-clang-x86_64-fmt
+            mingw-w64-clang-x86_64-boost
+            mingw-w64-clang-x86_64-robin-map
+            mingw-w64-clang-x86_64-xxhash
+            mingw-w64-clang-x86_64-ffmpeg
+            mingw-w64-clang-x86_64-zydis
+            mingw-w64-clang-x86_64-spirv-tools
+            mingw-w64-clang-x86_64-spirv-headers
+            mingw-w64-clang-x86_64-spirv-cross
+            mingw-w64-clang-x86_64-protobuf
+            mingw-w64-clang-x86_64-openssl
+            mingw-w64-clang-x86_64-zlib
+            mingw-w64-clang-x86_64-miniupnpc
+            mingw-w64-clang-x86_64-nlohmann-json
+      - name: Build the Windows runtime (build.sh, MSYS2 CLANG64)
+        shell: msys2 {0}
+        run: |
+          git config --global --add safe.directory '*'
+          if ! out=$(bash build.sh 2>&1); then
+            printf '%s\n' "$out" | tail -30 | while IFS= read -r line; do
+              echo "::error title=build.sh::${line}"
+            done
+            exit 1
+          fi
+          printf '%s\n' "$out" | tail -5
+      - name: Standalone tests (portable subset of the Linux-only build.sh --test block)
+        shell: msys2 {0}
+        run: |
+          set -e
+          try() {
+            local what="$1"; shift
+            if ! out=$("$@" 2>&1); then
+              {
+                echo "::error title=standalone-test::$what failed"
+                printf '%s\n' "$out" | sed $'s/\x1b\\[[0-9;]*m//g' | tail -20 | \
+                  awk '{line=$0; gsub(/%/, "%25", line); gsub(/\r/, "%0D", line); gsub(/\n/, "%0A", line); print "::error title=standalone-test::" line}'
+              }
+              exit 1
+            fi
+            printf '%s\n' "$out" | tail -2
+          }
+          # tests/test_file_mods.c is POSIX-only by construction (its fixture uses /tmp,
+          # mkdtemp and symlink) and stays on the Linux/Nix build.sh --test path.
+          echo "::notice title=standalone-test::test_file_mods skipped: POSIX fixture (Linux/Nix only)"
+          try compile-content clang -std=c11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -I. -Isrc tests/test_content.c src/runtime_content.c -o out/content-test
+          try content out/content-test
+          try compile-coroutine-frames clang++ -std=c++20 -O0 -g -Wall -Wextra -Werror tests/test_coroutine_frames.cpp -o out/coroutine-frames-test
+          try coroutine-frames out/coroutine-frames-test
+      - name: Python test suite
+        shell: msys2 {0}
+        run: |
+          if ! out=$(python -m unittest discover -s tests -p 'test_*.py' 2>&1); then
+            printf '%s' "$out" | sed $'s/\x1b\\[[0-9;]*m//g' | \
+              awk 'BEGIN{ORS=""}
+                   /^FAIL:|^ERROR:|AssertionError|CalledProcessError|Traceback|^Ran |^FAILED|^OK/ { cap = 12 }
+                   cap > 0 { errs = errs $0 "\n"; cap--; next }
+                   END {
+                     line = errs
+                     gsub(/%/, "%25", line); gsub(/\r/, "%0D", line); gsub(/\n/, "%0A", line)
+                     print "::error title=unittest::" line "\n"
+                   }'
+            exit 1
+          fi
+          printf '%s\n' "$out" | grep -E '^(OK|FAILED|Ran )'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-runtime
+          path: |
+            out/bb-probe.exe
+            out/bb-gpu-capabilities.exe
+            out/bb-play.exe
+          if-no-files-found: error

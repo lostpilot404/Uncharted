@@ -389,6 +389,7 @@ class Launcher:
         self.banner_key = self.banner_scaled = self.cover_image = None
         self.card_hot = None
         self.info, self.available = None, {}
+        self.gpu_vram_mb = None  # bb-gpu-capabilities --memory; see uncharted_hw (README 4 GB note)
         self.update_box = None
         root.title(f'{NAME} — The Nathan Drake Collection for Windows · by {AUTHOR}')
         root.configure(bg=BG)
@@ -404,6 +405,7 @@ class Launcher:
         root.after(100, self.drain_output)
         if self.app.get('check_updates', True):
             threading.Thread(target=self.check_update, daemon=True).start()
+        threading.Thread(target=self.detect_gpu, daemon=True).start()
 
     def px(self, size):
         return int(size * self.dpi)
@@ -1038,6 +1040,16 @@ class Launcher:
         self.row(f, _('Multiplier'), self.choice(f, 'frame_gen_multiplier', FRAME_GEN_MULTIPLIERS, 34),
                  _('FSR 3 makes one frame (2×). DLSS makes up to three on a GeForce RTX 50 (4×), '
                    'one on an RTX 40.'))
+        # README: 4 GB cards run out of video memory with Anti-aliasing or Frame generation on.
+        parent = self.target(f)
+        r = self.next_row(parent)
+        self.vram_warning = self.tk.Label(parent, text='', bg=CARD, fg='#d9a441',
+                                          font=self.font_ui_sm, wraplength=self.px(560),
+                                          justify='left')
+        self.vram_warning.grid(row=r, column=0, columnspan=2, sticky='w', pady=(8, 2))
+        self.var('anti_aliasing').trace_add('write', lambda *_: self.refresh_vram_warning())
+        self.var('frame_generation').trace_add('write', lambda *_: self.refresh_vram_warning())
+        self.refresh_vram_warning()
         self.check(f, 'show_fps', _('Show the FPS counter'))
 
     def build_controls(self):
@@ -1256,6 +1268,34 @@ class Launcher:
     def current(self):
         """The settings as they stand on screen (not yet saved)."""
         return {**self.app, **{key: v.get() for key, v in self.vars.items()}}
+
+    def detect_gpu(self):
+        """The card's video memory from bb-gpu-capabilities (runs beside the game's own probe)."""
+        from uncharted_hw import parse_gpu_memory
+        exe = PORT_DIR / 'bin' / 'bb-gpu-capabilities.exe'
+        if not exe.is_file():
+            exe = PORT_DIR / 'out' / 'bb-gpu-capabilities.exe'
+        env = dict(os.environ)
+        if not (exe.parent / 'SDL3.dll').is_file():
+            clang64 = Path(os.environ.get('MSYS2_ROOT', r'C:\msys64')) / 'clang64' / 'bin'
+            if clang64.is_dir():
+                env['PATH'] = f'{clang64}{os.pathsep}{env.get("PATH", "")}'
+        try:
+            result = subprocess.run([str(exe), '--memory'], capture_output=True, text=True,
+                                    timeout=30, env=env, creationflags=NO_WINDOW)
+        except (OSError, subprocess.TimeoutExpired):
+            return
+        self.gpu_vram_mb = parse_gpu_memory(result.stderr)[1]
+        self.ui_calls.put(self.refresh_vram_warning)
+
+    def refresh_vram_warning(self):
+        """README advice next to Anti-aliasing and Frame generation on small cards (uncharted_hw)."""
+        from uncharted_hw import low_vram_warning
+        if not getattr(self, 'vram_warning', None):
+            return
+        text = low_vram_warning(self.gpu_vram_mb, self.var('anti_aliasing').get(),
+                                self.var('frame_generation').get())
+        self.vram_warning.configure(text=text or '')
 
     def refresh(self):
         """Game cards, the ready line and the status for the current choices."""

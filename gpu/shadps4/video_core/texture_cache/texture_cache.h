@@ -363,8 +363,9 @@ private:
     /// Thread function for copying downloaded images out to CPU memory.
     void DownloadedImagesThread(const std::stop_token& token);
 
-    /// Create an image from the given parameters
-    [[nodiscard]] ImageId InsertImage(const ImageInfo& info, VAddr cpu_addr);
+    /// Create an image from the given parameters. bbport: recovers from out-of-video-memory by
+    /// evicting idle images and retrying once; asserts with the memory state if that is not enough.
+    [[nodiscard]] ImageId InsertImage(const ImageInfo& info);
 
     /// Register image in the page table
     void RegisterImage(ImageId image);
@@ -398,6 +399,11 @@ private:
 
     void GarbageCollectImages();
     void GarbageCollectSamplers();
+
+    /// bbport: collector body with `mutex` already held by the caller (GarbageCollectImages or
+    /// InsertImage's out-of-memory retry on the same paths that create images). `force` runs an
+    /// eviction pass even below the trigger mark: memory for a failed allocation has to come back.
+    void GarbageCollectImagesLocked(bool force);
 
 private:
     const Vulkan::Instance& instance;
