@@ -135,6 +135,13 @@ pub fn game_environment(
         env.insert("BB_RCAS".into(), "0".into());
     }
     env.insert("BB_UPSCALER".into(), settings.anti_aliasing.clone());
+    // "" keeps the preset saved by the in-game menu (bbport.ini). A scaled preset also lets
+    // Uncharted's velocity-mode camera use it (BB_SR_VELOCITY=1); Native AA pins DLAA.
+    if !settings.aa_preset.is_empty() {
+        env.insert("BB_UPSCALE_PRESET".into(), settings.aa_preset.clone());
+        let velocity = if settings.aa_preset == "0" { "0" } else { "1" };
+        env.insert("BB_SR_VELOCITY".into(), velocity.into());
+    }
     env.insert("BB_FSR_SHARPNESS".into(), settings.aa_sharpness.clone());
     env.insert("BB_FRAME_GEN".into(), settings.frame_generation.clone());
     env.insert(
@@ -250,6 +257,30 @@ mod tests {
     }
 
     #[test]
+    fn dlss_super_resolution_reaches_the_runtime() {
+        let mut s = settings();
+        s.anti_aliasing = "dlss".into();
+        s.aa_preset = "1".into();
+        let env = game_environment(&s, Path::new("C:\\cfg\\input.ini"), &BTreeMap::new());
+        assert_eq!(env["BB_UPSCALER"], "dlss");
+        // Quality: the renderer may build a 1280x720 image for a 1920x1080 output.
+        assert_eq!(env["BB_UPSCALE_PRESET"], "1");
+        assert_eq!(env["BB_SR_VELOCITY"], "1");
+        // Super resolution must never switch frame generation on.
+        assert_eq!(env["BB_FRAME_GEN"], "off");
+    }
+
+    #[test]
+    fn native_aa_pins_the_game_render_size() {
+        let mut s = settings();
+        s.anti_aliasing = "dlss".into();
+        s.aa_preset = "0".into();
+        let env = game_environment(&s, Path::new("C:\\cfg\\input.ini"), &BTreeMap::new());
+        assert_eq!(env["BB_UPSCALE_PRESET"], "0");
+        assert_eq!(env["BB_SR_VELOCITY"], "0");
+    }
+
+    #[test]
     fn environment_carries_the_contract() {
         let env = game_environment(
             &settings(),
@@ -261,6 +292,9 @@ mod tests {
         assert_eq!(env["BB_PRESENT_MODE"], "Mailbox");
         assert_eq!(env["BB_VBLANK_HZ"], "60");
         assert_eq!(env["BB_UPSCALER"], "off");
+        // The preset is left to bbport.ini until the player picks one.
+        assert!(!env.contains_key("BB_UPSCALE_PRESET"));
+        assert!(!env.contains_key("BB_SR_VELOCITY"));
         assert_eq!(env["BB_FRAME_GEN"], "off");
         assert_eq!(env["BB_RCAS"], "1");
         assert_eq!(env["BB_RCAS_ATTENUATION"], "500");

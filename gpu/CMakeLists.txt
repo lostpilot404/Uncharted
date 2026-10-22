@@ -308,6 +308,12 @@ add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_sup
 target_include_directories(upscaler-support-test PRIVATE shim)
 target_compile_options(upscaler-support-test PRIVATE -UNDEBUG)
 
+# bbport: DLSS SR rules without a GPU (tests/test_dlss_sr.cpp). Needs only the settings shim
+# and two headers, so it builds anywhere; CI runs it on Windows and Linux.
+add_executable(dlss-sr-test EXCLUDE_FROM_ALL ../tests/test_dlss_sr.cpp shim/bbport_settings.cpp)
+target_include_directories(dlss-sr-test PRIVATE shim shadps4 ..)
+target_compile_options(dlss-sr-test PRIVATE -UNDEBUG)
+
 add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp
     shadps4/video_core/renderer_vulkan/fsr411/fsr411.cpp)
 target_include_directories(fsr4-bench PRIVATE shadps4/video_core/renderer_vulkan/fsr411)

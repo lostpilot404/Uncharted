@@ -35,6 +35,9 @@ pub struct Settings {
     pub scaler: String,
     pub sharpening: String,
     pub anti_aliasing: String,
+    /// Render-size preset for the upscaler: "" (the game menu's), "0" Native AA/DLAA or
+    /// "1".."4" Quality..Ultra Performance. Mirrors `aa_preset` in the Python launcher.
+    pub aa_preset: String,
     pub aa_sharpness: String,
     pub frame_generation: String,
     pub frame_gen_multiplier: String,
@@ -74,6 +77,7 @@ impl Default for Settings {
             scaler: "fsr1".into(),
             sharpening: "500".into(),
             anti_aliasing: "off".into(),
+            aa_preset: String::new(),
             aa_sharpness: "0.2".into(),
             frame_generation: "off".into(),
             frame_gen_multiplier: "2".into(),
@@ -150,6 +154,11 @@ impl Settings {
                 ["off", "taa", "fsr3", "fsr4", "fsr411", "dlss"].as_slice(),
             ),
             (
+                "Render size",
+                &self.aa_preset,
+                ["", "0", "1", "2", "3", "4"].as_slice(),
+            ),
+            (
                 "Frame generation",
                 &self.frame_generation,
                 ["off", "fsr3", "dlss"].as_slice(),
@@ -196,6 +205,8 @@ mod tests {
         assert_eq!(s.scaler, "fsr1");
         assert_eq!(s.sharpening, "500");
         assert_eq!(s.anti_aliasing, "off");
+        // "" leaves the in-game menu's preset (bbport.ini) in charge; DLAA is an explicit "0".
+        assert_eq!(s.aa_preset, "");
         assert_eq!(s.frame_generation, "off");
         assert_eq!(s.mouse_sensitivity, "1.0");
         assert!(s.mouse_look && s.check_updates);
@@ -231,6 +242,19 @@ mod tests {
         s.game_dir_u2 = "C:/u2-standalone".into();
         assert_eq!(s.game_dir_for("u1"), "C:/collection");
         assert_eq!(s.game_dir_for("u2"), "C:/u2-standalone");
+    }
+
+    #[test]
+    fn render_size_presets_are_validated() {
+        let mut s = Settings::default();
+        s.game_dir = "C:/games/uncharted".into();
+        for preset in ["", "0", "1", "2", "3", "4"] {
+            s.aa_preset = preset.into();
+            assert!(s.problems().is_empty(), "{preset}: {:?}", s.problems());
+        }
+        // A preset the DLSS SDK does not have must be reported, not silently sent on.
+        s.aa_preset = "5".into();
+        assert!(s.problems().iter().any(|p| p.contains("Render size")));
     }
 
     #[test]

@@ -48,6 +48,25 @@ Updates
   Saves, settings, input.ini and out\ are kept. Advanced page -> Updates turns the check off
   or runs it now.
 
+Upscaling and DLSS
+- Anti-aliasing (Display page) picks the temporal reconstructor: TAA, AMD FSR 3.1, FSR 4,
+  or NVIDIA DLSS. Render size picks what it renders before reconstructing 1920 x 1080:
+  Native AA (no upscaling, DLSS calls it DLAA), Quality (1280 x 720), Balanced,
+  Performance (960 x 540) or Ultra Performance (640 x 360).
+- DLSS Super Resolution needs a GeForce RTX 20 series or newer and a current driver. It is
+  NVIDIA's upscaler, not a renamed DLAA: with Render size Quality the game really draws
+  1280 x 720 and DLSS builds the 1920 x 1080 image. Uncharted's camera decides the render
+  size, so bbport uses the chosen preset for DLSS automatically (BB_SR_VELOCITY=auto); set
+  BB_SR_VELOCITY=0 to keep the game's own 1920 x 1080.
+- The package ships bbport_dlss.dll (MIT, built from gpu/dlss_bridge) and NVIDIA's
+  nvngx_dlss.dll + nvngx_dlssg.dll with their licence in licenses\. If they are missing the
+  option is greyed out and FSR 3.1 is used instead; user\last_run.log says why.
+- Frame generation is off by default and DLSS Super Resolution does not turn it on. To be
+  sure it stays off, leave Frame generation at Off and check that user\last_run.log has no
+  "Frame Generation available" line. DLSS Frame Generation needs an RTX 40/50 card; Super
+  Resolution does not.
+- More: docs/dlss-sr.md in the source tree and Display page help text.
+
 Known problems
 - Uncharted 3, Cartagena square (chapter 2): at high frame rates the game could close with
   "GPU crash: the graphics device was lost". Fixed in 0.3. If it still happens, set Frame

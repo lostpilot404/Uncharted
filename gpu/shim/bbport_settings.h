@@ -15,6 +15,28 @@ enum Upscaler : int { UpscalerOff = 0, UpscalerFsr3 = 1, UpscalerFsr4 = 2, Upsca
 inline bool IsFsr4(int upscaler) {
     return upscaler == UpscalerFsr4 || upscaler == UpscalerFsr411;
 }
+/// Providers that reconstruct an output-size image from a smaller render: DLSS Super
+/// Resolution and FSR 3.1/4. TAA and "off" are native-resolution only, so a scaled preset
+/// must never be applied to them (it would upscale without any reconstruction).
+inline bool SupportsSuperResolution(int upscaler) {
+    return upscaler == UpscalerDlss || upscaler == UpscalerFsr3 || IsFsr4(upscaler);
+}
+/// Whether a velocity-mode session (Uncharted: CameraMotion::VelocityMode) may run a scaled
+/// preset instead of the game's own render size. Velocity-mode sessions used to be pinned to
+/// Native AA, which left DLSS with nothing to upscale (DLAA only).
+///   auto (-1, default): DLSS Super Resolution with a scaled preset - the one provider whose
+///          upscaling this change is for; every other provider keeps the previous behaviour.
+///   on (1): any provider that reconstructs (DLSS, FSR 3.1, FSR 4) with a scaled preset.
+///   off (0): never; the game's own render size, for cards where the smaller scene targets hurt.
+inline constexpr int SrVelocityAuto = -1;
+inline constexpr int SrVelocityOff = 0;
+inline constexpr int SrVelocityOn = 1;
+inline bool VelocityScaledPreset(bool velocity_mode, int sr_velocity, int upscaler, int preset) {
+    if (!velocity_mode) return true;
+    if (!SupportsSuperResolution(upscaler) || preset <= 0) return false; // nothing to upscale
+    if (sr_velocity == SrVelocityAuto) return upscaler == UpscalerDlss;
+    return sr_velocity == SrVelocityOn;
+}
 enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerformance, PresetCount };
 /// Frame generation (vk_frame_generation.h): frames generated between two of the game's.
 enum FrameGen : int { FrameGenOff = 0, FrameGenFsr3 = 1, FrameGenDlss = 2, FrameGenCount };
@@ -80,9 +102,19 @@ struct Values {
     /// Live resolution and preset changes (run.sh): 0 off by default (startup patch, fastest
     /// on the Steam Deck and older GPUs), -1 auto (strong discrete GPUs), 1 on. On restart.
     std::atomic<int> live_resolution{0};
+    /// Velocity-mode sessions (Uncharted): may a scaled preset be used? SrVelocityAuto by
+    /// default (DLSS Super Resolution only); BB_SR_VELOCITY / sr_velocity in bbport.ini
+    /// override (auto|0|1). See VelocityScaledPreset().
+    std::atomic<int> sr_velocity{SrVelocityAuto};
     /// Why FSR 4 cannot run (assets, device features), or null. Set by the renderer.
     std::atomic<const char*> fsr4_problem{nullptr};
     std::atomic<bool> fsr4_supported{false}, fsr411_supported{false};
+    /// DLSS depth convention. The games write D3D depth, 0 at the near plane and 1.0 for the
+    /// sky (docs/upscaler.md: projection z scale 1.00002 / offset -0.0500679, near 0.05), and
+    /// FSR 3.1 and the frame-generation path already assume the same, so DepthInverted stays
+    /// off. BB_DLSS_DEPTH_INVERTED=1 / dlss_depth_inverted=1 exists only to test the opposite
+    /// convention on a GPU, which is the one input CI cannot check.
+    std::atomic<bool> dlss_depth_inverted{false};
     /// DLSS (bbport_dlss.dll, NVIDIA RTX) is ready, or why not (null before the device exists).
     std::atomic<bool> dlss_supported{false};
     std::atomic<const char*> dlss_problem{nullptr};

@@ -7,14 +7,44 @@
 set -euo pipefail
 cd -- "$(dirname -- "$0")/../.."
 sdk=${DLSS_SDK_ROOT:?Set DLSS_SDK_ROOT to a checkout of github.com/NVIDIA/DLSS}
+[[ $sdk == /* ]] || sdk=$PWD/$sdk
 cmake=${CMAKE_EXE:-cmake}
-# Only the Vulkan headers: MSYS2's C headers must not reach MSVC.
+# Only the Vulkan headers: MSYS2's C headers must not reach MSVC. The MSYS2 root is not
+# always /c/msys64 (CI installs it elsewhere), so find it from the running toolchain first.
+# VULKAN_INCLUDE_SRC: the MSYS2 CLANG64 include directory, when it is known (CI passes it).
+candidates=()
+if [[ -n ${VULKAN_INCLUDE_SRC:-} ]]; then candidates+=("$VULKAN_INCLUDE_SRC"); fi
+candidates+=("$(dirname -- "$(command -v clang || echo /nonexistent/clang)")/../include")
+candidates+=("${MSYS2_ROOT:-/c/msys64}/clang64/include" /clang64/include)
+include_root=
+for candidate in "${candidates[@]}"; do
+    if [[ -d $candidate/vulkan ]]; then include_root=$candidate; break; fi
+done
+if [[ -z $include_root ]]; then
+    echo 'Vulkan headers not found: install mingw-w64-clang-x86_64-vulkan-headers (MSYS2 CLANG64)' >&2
+    exit 1
+fi
 rm -rf out/vkinclude && mkdir -p out/vkinclude
-cp -r /c/msys64/clang64/include/vulkan /c/msys64/clang64/include/vk_video out/vkinclude/
-"$cmake" -S gpu/dlss_bridge -B out/dlss-bridge -G "Visual Studio 17 2022" -A x64 \
-    -DDLSS_SDK_ROOT="$(cygpath -m "$sdk")" -DVULKAN_INCLUDE="$(cygpath -m "$PWD/out/vkinclude")"
-"$cmake" --build out/dlss-bridge --config Release
-cp out/dlss-bridge/Release/bbport_dlss.dll "$sdk/lib/Windows_x86_64/rel/nvngx_dlss.dll" \
+cp -r "$include_root/vulkan" out/vkinclude/
+if [[ -d $include_root/vk_video ]]; then cp -r "$include_root/vk_video" out/vkinclude/; fi
+# CMAKE_GENERATOR: "Visual Studio 17 2022" by default (needs a Visual Studio install CMake can
+# find). CI uses Ninja inside the MSVC environment set up by ilammy/msvc-dev-cmd, where the VS
+# generator cannot locate the installation.
+generator=${CMAKE_GENERATOR:-Visual Studio 17 2022}
+common=(-S gpu/dlss_bridge -B out/dlss-bridge -G "$generator"
+        -DDLSS_SDK_ROOT="$(cygpath -m "$sdk")"
+        -DVULKAN_INCLUDE="$(cygpath -m "$PWD/out/vkinclude")")
+if [[ $generator == Visual\ Studio* ]]; then
+    "$cmake" "${common[@]}" -A x64
+    "$cmake" --build out/dlss-bridge --config Release
+    built=out/dlss-bridge/Release/bbport_dlss.dll
+else
+    "$cmake" "${common[@]}" -DCMAKE_BUILD_TYPE=Release
+    "$cmake" --build out/dlss-bridge
+    built=out/dlss-bridge/bbport_dlss.dll
+fi
+[[ -f $built ]] || { echo "bbport_dlss.dll was not built ($built)" >&2; exit 1; }
+cp "$built" "$sdk/lib/Windows_x86_64/rel/nvngx_dlss.dll" \
     "$sdk/lib/Windows_x86_64/rel/nvngx_dlssg.dll" out/
 cp "$sdk/LICENSE.txt" out/NVIDIA-DLSS-LICENSE.txt
 echo "DLSS bridge ready: out/bbport_dlss.dll, out/nvngx_dlss.dll, out/nvngx_dlssg.dll"

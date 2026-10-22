@@ -66,6 +66,12 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.fsr4_invert_jitter = i != 0;
     } else if (key == "model_lod") {
         v.model_lod = std::clamp(i, -2, 2);
+    } else if (key == "dlss_depth_inverted") {
+        v.dlss_depth_inverted = i != 0;
+    } else if (key == "sr_velocity") {
+        // "auto" is the default and is not a number: Set() sees 0 for it, so read the text.
+        const std::string_view text{value};
+        v.sr_velocity = text == "auto" ? SrVelocityAuto : (i != 0 ? SrVelocityOn : SrVelocityOff);
     } else if (key == "live_resolution") {
         v.live_resolution = value == "auto" ? -1 : std::clamp(i, 0, 1);
     } else if (key == "output_res") {
@@ -121,6 +127,7 @@ void Load() {
         {"BB_REACTIVE", "reactive"},              {"BB_REACTIVE_SCALE", "reactive_scale"},
         {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
         {"BB_UPSCALE_PRESET", "preset"},            {"BB_OBJECT_MOTION", "object_motion"},
+        {"BB_SR_VELOCITY", "sr_velocity"},         {"BB_DLSS_DEPTH_INVERTED", "dlss_depth_inverted"},
         {"BB_FRAME_GEN", "frame_gen"},              {"BB_FRAME_GEN_MULTIPLIER", "frame_gen_multiplier"},
     };
     for (const auto& [env, key] : env_keys) {
@@ -208,6 +215,10 @@ void Save() {
     for (int e = 0; e < EffectCount; ++e) {
         std::fprintf(file, "%s=%d\n", Effects[e].key, int(v.effects[e].load()));
     }
+    const int sr_velocity = v.sr_velocity.load();
+    std::fprintf(file, "sr_velocity=%s\n",
+                 sr_velocity == SrVelocityAuto ? "auto" : sr_velocity == SrVelocityOn ? "1" : "0");
+    std::fprintf(file, "dlss_depth_inverted=%d\n", int(v.dlss_depth_inverted.load()));
     std::fprintf(file, "model_lod=%d\noutput_res=%dx%d\n", v.model_lod.load(),
                  OutputWidths[v.output_res], OutputHeights[v.output_res]);
     std::fprintf(file, "frame_gen=%s\nframe_gen_multiplier=%d\n", FrameGenName(v.frame_gen),
