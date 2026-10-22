@@ -72,16 +72,24 @@ jobs:
           fi
           printf '%s\n' "$out" | tail -5
 
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Build the DLSS bridge and stage NVIDIA's runtimes (MSVC)
-        shell: msys2 {0}
+        shell: bash
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
         run: |
-          set -e
+          set -euo pipefail
           # github.com/NVIDIA/DLSS: headers, nvsdk_ngx_s.lib, and nvngx_dlss.dll /
           # nvngx_dlssg.dll, redistributed with an application under its LICENSE.txt, which
           # packaging/windows/build_dlss.sh copies into out/NVIDIA-DLSS-LICENSE.txt.
           rm -rf out/dlss-sdk
           git clone --depth 1 --quiet https://github.com/NVIDIA/DLSS out/dlss-sdk
           export DLSS_SDK_ROOT=$PWD/out/dlss-sdk
+          # MSYS2's Vulkan headers, for the bridge's Vulkan types only.
+          export VULKAN_INCLUDE_SRC="$(cygpath -u "$MSYS2_LOCATION")/clang64/include"
           if ! out=$(bash packaging/windows/build_dlss.sh 2>&1); then
             printf '%s\n' "$out" | tail -40 | while IFS= read -r line; do
               echo "::error title=build_dlss.sh::${line}"

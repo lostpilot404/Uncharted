@@ -7,12 +7,17 @@
 set -euo pipefail
 cd -- "$(dirname -- "$0")/../.."
 sdk=${DLSS_SDK_ROOT:?Set DLSS_SDK_ROOT to a checkout of github.com/NVIDIA/DLSS}
+[[ $sdk == /* ]] || sdk=$PWD/$sdk
 cmake=${CMAKE_EXE:-cmake}
 # Only the Vulkan headers: MSYS2's C headers must not reach MSVC. The MSYS2 root is not
 # always /c/msys64 (CI installs it elsewhere), so find it from the running toolchain first.
+# VULKAN_INCLUDE_SRC: the MSYS2 CLANG64 include directory, when it is known (CI passes it).
+candidates=()
+if [[ -n ${VULKAN_INCLUDE_SRC:-} ]]; then candidates+=("$VULKAN_INCLUDE_SRC"); fi
+candidates+=("$(dirname -- "$(command -v clang || echo /nonexistent/clang)")/../include")
+candidates+=("${MSYS2_ROOT:-/c/msys64}/clang64/include" /clang64/include)
 include_root=
-for candidate in "$(dirname -- "$(command -v clang || echo /nonexistent/clang)")/../include" \
-                 "${MSYS2_ROOT:-/c/msys64}/clang64/include" /clang64/include; do
+for candidate in "${candidates[@]}"; do
     if [[ -d $candidate/vulkan ]]; then include_root=$candidate; break; fi
 done
 if [[ -z $include_root ]]; then
