@@ -845,13 +845,17 @@ The branch was pushed and PR #6 opened (`https://github.com/lostpilot404/Unchart
 base `main`, head `arena/3219e6b1-uncharted`) so the new test step could be exercised on real
 Windows rather than merely predicted. Nothing was merged.
 
-Run for the PR head `32f49aa` (docs commit; the code is identical to `bf2f7db`):
+Run for the final PR head `be9d9c1e126e5028d840a558a1945afaffc32d8c` (all three on that exact
+SHA, created 2026-10-22T16:10:30Z):
 
 | Workflow | Run | Result |
 |---|---|---|
-| Runtime CI | https://github.com/lostpilot404/Uncharted/actions/runs/39805755984 | **success** |
-| Rust launcher CI | https://github.com/lostpilot404/Uncharted/actions/runs/39805755756 | **success** |
-| Windows package | https://github.com/lostpilot404/Uncharted/actions/runs/39805757419 | **success** — the packaged ZIP was rebuilt and checked with the fix in the tree |
+| Runtime CI | https://github.com/lostpilot404/Uncharted/actions/runs/39811702837 | **success**, 7m43s |
+| Rust launcher CI | https://github.com/lostpilot404/Uncharted/actions/runs/39811702830 | **success**, 3m9s |
+| Windows package | https://github.com/lostpilot404/Uncharted/actions/runs/39811702866 | **success**, 13m18s — the packaged ZIP was rebuilt and checked with the fix in the tree |
+
+The earlier heads were also fully green: `b80d143` (Runtime 39807667506, Rust launcher
+39807670668, package 39807667460) and `32f49aa` (39805755984 / 39805755756 / 39805757419).
 
 The first push (`52ccbfb`) also produced a fully green Runtime CI
 (https://github.com/lostpilot404/Uncharted/actions/runs/39801999073) and Rust launcher CI
