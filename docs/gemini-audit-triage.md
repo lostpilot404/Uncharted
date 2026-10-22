@@ -845,20 +845,24 @@ The branch was pushed and PR #6 opened (`https://github.com/lostpilot404/Unchart
 base `main`, head `arena/3219e6b1-uncharted`) so the new test step could be exercised on real
 Windows rather than merely predicted. Nothing was merged.
 
-Run for the final PR head `a17a4bf3fac22bf6406ed60b2d70f36b05ac9f14`, all three reporting that
-exact SHA:
+This table is updated to whatever the branch head is at the end of a session; every run below
+reported the SHA it is listed against.
+
+Final head `bd933ad85a7e57582ef0c4c2df3ad8236e92107e`, all three running that exact SHA
+(2026-10-22T16:46:37Z):
 
 | Workflow | Run | Result |
 |---|---|---|
-| Runtime CI | https://github.com/lostpilot404/Uncharted/actions/runs/39813852060 | **success**, 6m21s |
-| Rust launcher CI | https://github.com/lostpilot404/Uncharted/actions/runs/39813852104 | **success**, 3m41s |
-| Windows package | https://github.com/lostpilot404/Uncharted/actions/runs/39813851971 | **success** — the packaged ZIP was rebuilt and checked with the fix in the tree |
+| Runtime CI | https://github.com/lostpilot404/Uncharted/actions/runs/39816803333 | **success**, 8m3s |
+| Rust launcher CI | https://github.com/lostpilot404/Uncharted/actions/runs/39816803304 | **success**, 3m56s |
+| Windows package | https://github.com/lostpilot404/Uncharted/actions/runs/39816803394 | **success**, 12m43s — the packaged ZIP was rebuilt and checked with the fix in the tree |
 
 The runtime job's annotation for that run reads
 `notice: mutex-cond-test ran and passed (destroyed cond handles reported, statistics race-free)`.
 
 Every earlier head of this branch was also fully green, so no run is being relied on out of
-sequence: `be9d9c1` (Runtime 39811702837, Rust launcher 39811702830, package 39811702866),
+sequence: `a17a4bf` (39813852060 / 39813852104 / 39813851971),
+`be9d9c1` (39811702837 / 39811702830 / 39811702866),
 `b80d143` (39807667506 / 39807670668 / 39807667460) and `32f49aa`
 (39805755984 / 39805755756 / 39805757419).
 
