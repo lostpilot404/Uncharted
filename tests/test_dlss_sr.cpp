@@ -12,9 +12,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
-#include <unistd.h>
 
 #include "bbport_settings.h"
+#include "test_env.h"
 #include "video_core/renderer_vulkan/dlss_sr.h"
 #include "video_core/renderer_vulkan/scene_resolution.h"
 
@@ -137,14 +137,13 @@ int main() {
     assert(!SupportsSuperResolution(UpscalerTaa));
     assert(!SupportsSuperResolution(UpscalerOff));
 
-    char path[] = "/tmp/bbport-dlss-sr-test-XXXXXX";
-    const int fd = mkstemp(path);
-    assert(fd >= 0);
-    close(fd);
-    setenv("BB_CONFIG", path, 1);
+    const std::string file = TestEnv::TempFile("bbport-dlss-sr-test-");
+    assert(!file.empty());
+    const char* const path = file.c_str();
+    TestEnv::Set("BB_CONFIG", path);
     for (const char* name : {"BB_UPSCALER", "BB_UPSCALE_PRESET", "BB_SR_VELOCITY", "BB_RENDER_RES",
                              "BB_FRAME_GEN", "BB_FRAME_GEN_MULTIPLIER"}) {
-        unsetenv(name);
+        TestEnv::Unset(name);
     }
     auto& s = Get();
 
@@ -208,10 +207,10 @@ int main() {
     assert(s.sr_velocity == BbSettings::SrVelocityOn);
 
     // Environment overrides used by the launcher.
-    setenv("BB_UPSCALER", "dlss", 1);
-    setenv("BB_UPSCALE_PRESET", "3", 1);
-    setenv("BB_SR_VELOCITY", "1", 1);
-    setenv("BB_FRAME_GEN", "off", 1);
+    TestEnv::Set("BB_UPSCALER", "dlss");
+    TestEnv::Set("BB_UPSCALE_PRESET", "3");
+    TestEnv::Set("BB_SR_VELOCITY", "1");
+    TestEnv::Set("BB_FRAME_GEN", "off");
     Load();
     assert(s.upscaler == UpscalerDlss && s.preset == Performance && s.sr_velocity);
     assert(s.frame_gen == FrameGenOff);
