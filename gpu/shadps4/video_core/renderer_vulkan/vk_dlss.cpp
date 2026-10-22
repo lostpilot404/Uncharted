@@ -217,10 +217,15 @@ bool Dlss::CreateFeature(vk::CommandBuffer command, const FeatureDesc& desc) {
     impl->feature.reset();
     // The render-preset letter stays at 0 (the SDK's own default for the quality class);
     // the depth convention is the games' reversed-Z, overridable for validation on a GPU.
-    const BbDlssFeature feature{desc.input_width,  desc.input_height, desc.output_width,
-                                desc.output_height, desc.quality,      0,
-                                BbSettings::Get().dlss_depth_inverted ? 1 : 0,
-                                desc.hdr ? 1 : 0};
+    BbDlssFeature feature{};
+    feature.input_width = desc.input_width;
+    feature.input_height = desc.input_height;
+    feature.output_width = desc.output_width;
+    feature.output_height = desc.output_height;
+    feature.quality = desc.quality;
+    feature.preset = 0; // the SDK's default render preset for the quality class
+    feature.depth_inverted = BbSettings::Get().dlss_depth_inverted ? 1 : 0;
+    feature.hdr = desc.hdr ? 1 : 0;
     if (!impl->api->CreateFeature(command, &feature)) {
         return false;
     }
