@@ -135,6 +135,11 @@ jobs:
           sha256sum "$zip" | tee "$zip.sha256"
           python tools/verify_package.py "$zip"
           du -sh "$zip"
+          # Recorded as annotations: they stay readable through the API even when the artifact
+          # itself cannot be downloaded, so the checksum is quotable outside CI.
+          echo "::notice title=package-checksum::$(cut -d' ' -f1 "$zip.sha256")"
+          echo "::notice title=package-size::$(stat -c %s "$zip") bytes"
+          echo "::notice title=package-commit::$(git rev-parse HEAD)"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -143,4 +148,4 @@ jobs:
             dist/uncharted-windows.zip
             dist/uncharted-windows.zip.sha256
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
