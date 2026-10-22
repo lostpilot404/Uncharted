@@ -88,9 +88,15 @@ fi
 for license in gpu/third_party/wepoll/LICENSE:wepoll gpu/third_party/httplib/LICENSE:cpp-httplib; do
     if [[ -f ${license%%:*} ]]; then cp "${license%%:*}" "$dest/licenses/${license##*:}-LICENSE.txt"; fi
 done
+# Dependency licences are best effort: a package may name its file COPYING, and a missing one
+# must not stop a package that is otherwise complete (the project's own and NVIDIA's are
+# copied unconditionally above).
 for package in protobuf abseil-cpp openssl miniupnpc zlib; do
-    license=/clang64/share/licenses/$package/LICENSE
-    if [[ -f $license ]]; then cp "$license" "$dest/licenses/$package-LICENSE.txt"; fi
+    for license in /clang64/share/licenses/$package/LICENSE /clang64/share/licenses/$package/COPYING; do
+        if [[ -f $license ]]; then
+            cp "$license" "$dest/licenses/$package-LICENSE.txt" 2>/dev/null && break
+        fi
+    done
 done
 find "$dest" -name __pycache__ -prune -exec rm -r {} +
 mkdir -p dist
