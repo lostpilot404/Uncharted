@@ -109,6 +109,8 @@ jobs:
           echo "::notice title=standalone-test::upscaler-support-test ran and passed"
           echo "::notice title=standalone-test::dlss-sr-test ran and passed (presets, render sizes, velocity gate, defaults, frame generation)"
           echo "::notice title=standalone-test::coroutine-frames-test ran and passed"
+          echo "::notice title=standalone-test::content-test ran and passed"
+          echo "::notice title=standalone-test::mutex-cond-test ran and passed (destroyed cond handles reported, statistics race-free)"
       - name: Python test suite
         shell: msys2 {0}
         run: |
