@@ -23,14 +23,16 @@
 #define GUEST_EINVAL ((int32_t)UINT32_C(0x80020016))
 #define GUEST_EPERM ((int32_t)UINT32_C(0x80020001))
 
-static long double_checks;
+/* check_pair() is called from the waiter thread as well as from main (the signaller's
+ * "unlock" overlaps the waiter's "wait"/"unlock"), so the tally is atomic. */
+static _Atomic long double_checks;
 
 static void check_pair(const char *what, int32_t got, int32_t want) {
     if (got != want) {
         fprintf(stderr, "FAIL: %s: got %#x, want %#x\n", what, (uint32_t)got, (uint32_t)want);
         exit(1);
     }
-    ++double_checks;
+    atomic_fetch_add_explicit(&double_checks, 1, memory_order_relaxed);
 }
 
 /* ---- a real wait/signal round trip, so the working path stays covered ---- */
@@ -157,6 +159,6 @@ int main(void) {
     test_counters_do_not_lose_updates();
     runtime_mutex_report();
     printf("PASS: mutex/cond handle lifetime, destroyed-sentinel reporting and shared statistics "
-           "(%ld checks)\n", double_checks);
+           "(%ld checks)\n", atomic_load_explicit(&double_checks, memory_order_relaxed));
     return 0;
 }
