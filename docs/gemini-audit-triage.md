@@ -806,13 +806,18 @@ The branch was pushed and PR #6 opened (`https://github.com/lostpilot404/Unchart
 base `main`, head `arena/3219e6b1-uncharted`) so the new test step could be exercised on real
 Windows rather than merely predicted. Nothing was merged.
 
-Run for head `bf2f7db` (commit "ci: emit notices for content-test and the new mutex-cond test"):
+Run for the PR head `32f49aa` (docs commit; the code is identical to `bf2f7db`):
 
 | Workflow | Run | Result |
 |---|---|---|
-| Runtime CI | https://github.com/lostpilot404/Uncharted/actions/runs/39803863080 | **success**, 11m21s |
-| Rust launcher CI | https://github.com/lostpilot404/Uncharted/actions/runs/39803863255 | **success**, 5m54s |
-| Windows package | https://github.com/lostpilot404/Uncharted/actions/runs/39803863210 | still running when this report was written; it runs `bash build.sh` without `--test`, so the only edited shell lines are not executed in it |
+| Runtime CI | https://github.com/lostpilot404/Uncharted/actions/runs/39805755984 | **success** |
+| Rust launcher CI | https://github.com/lostpilot404/Uncharted/actions/runs/39805755756 | **success** |
+| Windows package | https://github.com/lostpilot404/Uncharted/actions/runs/39805757419 | **success** — the packaged ZIP was rebuilt and checked with the fix in the tree |
+
+The first push (`52ccbfb`) also produced a fully green Runtime CI
+(https://github.com/lostpilot404/Uncharted/actions/runs/39801999073) and Rust launcher CI
+(https://github.com/lostpilot404/Uncharted/actions/runs/39801998881) before the notice-only
+follow-up, and the Windows package job of that push was still running when the follow-up landed.
 
 The runtime job's "Build the Windows runtime (MSYS2 CLANG64)" step succeeded, so `src/runtime_mutex.c`
 **compiles on the target toolchain** with the project's `-Werror` policy. The "Standalone tests"
