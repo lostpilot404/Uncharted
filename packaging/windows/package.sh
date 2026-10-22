@@ -50,7 +50,10 @@ if command -v llvm-strip >/dev/null 2>&1; then
 else
     cp out/bb-play.exe "$dest/Play Uncharted.exe"
 fi
-cp launcher/uncharted.ico launcher/uncharted.png "$dest/launcher/"
+# The .png is optional artwork (make_uncharted_icon.py draws both); the .ico is the icon.
+for asset in launcher/uncharted.ico launcher/uncharted.png; do
+    if [[ -f $asset ]]; then cp "$asset" "$dest/launcher/"; fi
+done
 # The executables without debug information (out/ keeps the symbols for crash reports).
 for exe in bb-probe.exe bb-gpu-capabilities.exe; do
     if command -v llvm-strip >/dev/null 2>&1; then
