@@ -1,0 +1,17 @@
+[package]
+name = "uncharted-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Windows 11 launcher for Uncharted: The Nathan Drake Collection (egui/eframe)."
+
+[[bin]]
+name = "uncharted-launcher"
+path = "src/main.rs"
+
+[dependencies]
+uncharted-core = { path = "../uncharted-core" }
+eframe = { version = "0.36", default-features = true }
+egui = "0.36"
+# Native folder pickers on Windows 11 (runs on the worker thread, never on the UI thread).
+rfd = "0.15"

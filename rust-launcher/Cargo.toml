@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["crates/uncharted-core", "crates/uncharted-ui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+repository = "https://github.com/lostpilot404/Uncharted"
+
+[profile.release]
+lto = "thin"
+strip = true
