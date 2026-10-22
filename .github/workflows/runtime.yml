@@ -159,10 +159,23 @@ jobs:
             -I"$source_root/src" "$source_root/tests/test_windows_memory.c" -lonecore \
             -o out/windows-memory-test.exe
           run_checked execute out/windows-memory-test.exe
-          grep -E '^(RESULT |COLLISION_BLOCKER=|COLLISION_PROBE |TEST_HOOK_RESERVATION_FAILURE |STOP: reserving|--- .*child_exit=|FIXTURE_(PLACEHOLDER|INITIAL_VIEW|CLEANUP=)|CARVE_(LEFT|MIDDLE|RIGHT|TRACKED_NOACCESS) |GAP_(LEFT|RIGHT)_DURING_UNMAP |GAP_DIRECTLY_OBSERVED=|TEMP_WRITABLE_PROTECTION=|PHASE2_RESULT |CONCURRENT_ACCESS_(GATE|ATTEMPT|COMPLETED)=)' "$log" | \
-            while IFS= read -r line; do
-              echo "::notice title=windows-memory::$line"
-            done
+          emit_notice() {
+            local topic="$1" pattern="$2" text
+            text=$(grep -E "$pattern" "$log" | awk 'BEGIN { ORS = " | " } { print }') || true
+            if [[ -n "$text" ]]; then
+              text=${text% | }
+              text=${text//%/%25}
+              text=${text//$'\r'/%0D}
+              echo "::notice title=windows-memory::$topic: $text"
+            fi
+          }
+          # Keep evidence in a few compact annotations (GitHub limits per-step annotations).
+          emit_notice 'CRIT-05' '^(RESULT CRIT-05=|COLLISION_BLOCKER=|COLLISION_PROBE |TEST_HOOK_RESERVATION_FAILURE |STOP: reserving|--- CRIT-05)'
+          emit_notice 'CRIT-06 carve' '^(RESULT CRIT-06\.fixture=|PHASE2_RESULT |FIXTURE_(PLACEHOLDER|INITIAL_VIEW|CLEANUP=)|CARVE_(LEFT|MIDDLE|RIGHT|TRACKED_NOACCESS) |--- CRIT-06 section-backed carve)'
+          emit_notice 'CRIT-06 gap' '^(RESULT CRIT-06\.gap=|GAP_(LEFT|RIGHT)_DURING_UNMAP |GAP_DIRECTLY_OBSERVED=|--- CRIT-06 direct gap)'
+          emit_notice 'CRIT-06 concurrent' '^(RESULT CRIT-06\.concurrent_access=|CONCURRENT_ACCESS_(GATE|ATTEMPT|COMPLETED)=|--- CRIT-06 isolated concurrent access)'
+          emit_notice 'CRIT-06 protection' '^(RESULT CRIT-06\.temporary_protection=|TEMP_WRITABLE_PROTECTION=|--- CRIT-06 temporary protection)'
+          emit_notice 'overall' '^(RESULT SUMMARY|PASS: Windows memory)'
           echo "::notice title=windows-memory::tested_source_commit=$source_commit"
           echo "::notice title=windows-memory::workflow_checkout_commit=$(git rev-parse HEAD)"
 
