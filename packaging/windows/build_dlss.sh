@@ -27,10 +27,24 @@ fi
 rm -rf out/vkinclude && mkdir -p out/vkinclude
 cp -r "$include_root/vulkan" out/vkinclude/
 if [[ -d $include_root/vk_video ]]; then cp -r "$include_root/vk_video" out/vkinclude/; fi
-"$cmake" -S gpu/dlss_bridge -B out/dlss-bridge -G "Visual Studio 17 2022" -A x64 \
-    -DDLSS_SDK_ROOT="$(cygpath -m "$sdk")" -DVULKAN_INCLUDE="$(cygpath -m "$PWD/out/vkinclude")"
-"$cmake" --build out/dlss-bridge --config Release
-cp out/dlss-bridge/Release/bbport_dlss.dll "$sdk/lib/Windows_x86_64/rel/nvngx_dlss.dll" \
+# CMAKE_GENERATOR: "Visual Studio 17 2022" by default (needs a Visual Studio install CMake can
+# find). CI uses Ninja inside the MSVC environment set up by ilammy/msvc-dev-cmd, where the VS
+# generator cannot locate the installation.
+generator=${CMAKE_GENERATOR:-Visual Studio 17 2022}
+common=(-S gpu/dlss_bridge -B out/dlss-bridge -G "$generator"
+        -DDLSS_SDK_ROOT="$(cygpath -m "$sdk")"
+        -DVULKAN_INCLUDE="$(cygpath -m "$PWD/out/vkinclude")")
+if [[ $generator == Visual\ Studio* ]]; then
+    "$cmake" "${common[@]}" -A x64
+    "$cmake" --build out/dlss-bridge --config Release
+    built=out/dlss-bridge/Release/bbport_dlss.dll
+else
+    "$cmake" "${common[@]}" -DCMAKE_BUILD_TYPE=Release
+    "$cmake" --build out/dlss-bridge
+    built=out/dlss-bridge/bbport_dlss.dll
+fi
+[[ -f $built ]] || { echo "bbport_dlss.dll was not built ($built)" >&2; exit 1; }
+cp "$built" "$sdk/lib/Windows_x86_64/rel/nvngx_dlss.dll" \
     "$sdk/lib/Windows_x86_64/rel/nvngx_dlssg.dll" out/
 cp "$sdk/LICENSE.txt" out/NVIDIA-DLSS-LICENSE.txt
 echo "DLSS bridge ready: out/bbport_dlss.dll, out/nvngx_dlss.dll, out/nvngx_dlssg.dll"
