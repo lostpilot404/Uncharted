@@ -992,29 +992,54 @@ survivors; reconstruction uses `PAGE_READWRITE` and saved protection runs are re
 
 `tests/test_windows_memory.c` includes the complete production `runtime_memory.c` to test the
 actual static `host_map()`, `view_map()` and `carve_host()` implementations without copying them.
-The minimal standalone link boundary is Win32 + C runtime + winpthreads, with inert stubs for the
-unexercised `runtime_lookup()` and `compat_sleep_ns()` project references. The fixture reserves
-only 1 MiB, records the test range only after `VirtualAlloc2()` succeeds, and exercises a 64 KiB
+The minimal standalone link boundary is Win32 + onecore + C runtime + winpthreads, with inert
+stubs for the unexercised `runtime_lookup()` and `compat_sleep_ns()` project references. The
+fixture reserves only 1 MiB, records the test range only after `VirtualAlloc2()` succeeds, and
+exercises a 64 KiB
 interior carve. Test-only callbacks in `runtime_memory.c` are guarded by
 `BB_WINDOWS_MEMORY_TEST` and are absent from normal builds.
 
-Runtime CI has been updated to compile and execute the Windows-native harness from the exact PR
-head SHA (it verifies GitHub's PR-head ref) and retain its output log, without replacing existing
-steps. The harness separately reports the deliberate collision error/child exit/table count, section-backed
-left/right state and offsets, direct `VirtualQuery()` observations during the unmap interval,
-controlled concurrent access, temporary writable protection, final protection restoration,
-and cleanup. It does not require an access violation to be reproduced in every run; it reports
-that result independently from directly observing the interval.
+Runtime CI compiles and executes the Windows-native harness from the exact PR-head SHA (it
+verifies GitHub's PR-head ref) and retains its output log, without replacing existing steps. The
+harness reports collision errors/child exits/table state, section-backed mapping and offsets,
+direct `VirtualQuery()` observations, concurrent access, temporary protections, restoration and
+cleanup. Access-violation classification is independent of direct gap observation; a gap does
+not imply every execution crashes.
 
-**Windows results are pending until Runtime CI runs on the final commit SHA.** This Linux sandbox
-has no Windows runtime, Wine, or Windows cross-toolchain. The only local results are:
+A successful native Windows run is recorded at [Runtime CI run 39843825619](https://github.com/lostpilot404/Uncharted/actions/runs/39843825619).
+The log confirms the harness was built from the exact PR-head source commit
+`abc35da67bffffdc1d3883f066c91d16ca1b4b1d` (the workflow's synthetic merge checkout was
+`4acc2c4ca6e163bd7cf162223fe3bba6a669496f`). Observed outcomes:
 
-- `gcc -std=c11 -Wall -Wextra -Werror -Isrc -c src/runtime_memory.c` — pass for the
-  non-Windows branch only; `nm` shows `runtime_lookup` as its only project-level unresolved
-  reference there.
-- `python3 -m unittest discover -s tests -p 'test_*.py'` — 98 tests, 28 skips, OK.
-- Windows API behavior (including error 487 and `STATUS_ACCESS_VIOLATION`) — **not yet observed**.
-- The first Runtime CI attempt on `241ab1da126c893ae80b29d50628b3dbd0e6f51b` ([run 39838263644](https://github.com/lostpilot404/Uncharted/actions/runs/39838263644)) passed the Windows runtime build and existing standalone tests, then stopped at harness link time: `ld.lld: undefined symbol: VirtualAlloc2`. No characterization API calls ran. The production target already links `onecore`; the standalone CI command and documented build now link `-lonecore`. A rerun is required before reporting Windows observations.
+- CRIT-05: the 64 KiB placeholder blocker at `USER_MIN` was reserved (`VirtualQuery` state
+  `0x2000`); the exact 944 GiB `VirtualAlloc2` probe returned `NULL` with `GetLastError()=487`
+  (`ERROR_INVALID_ADDRESS`). Production failure hook also captured 487 with `region_count=0`;
+  `win_fail()` emitted 487 and child exit was decimal 21 (`0x15`).
+- CRIT-06 fixture: the 64 KiB interior carve in a 1 MiB section view passed. Left/right states
+  were `MEM_COMMIT`/`MEM_MAPPED` with `PAGE_READONLY` (`0x2`); the center was `MEM_RESERVE`
+  (`0x2000`); the tracked page was restored to `PAGE_NOACCESS` (`0x1`). The right section offset
+  was `0x40000`; alias/data and cleanup checks passed.
+- Direct gap: both surviving sibling queries reported `MEM_RESERVE` (`0x2000`), `Protect=0`,
+  `Type=MEM_PRIVATE` (`0x20000`) before reconstruction, while the region table still said
+  mapped. The isolated worker reached the gate and its read reproduced
+  `STATUS_ACCESS_VIOLATION` (`0xC0000005`).
+- Temporary protection: left, tracked, and right pages each reported `MEM_COMMIT` with
+  `PAGE_READWRITE` (`0x4`) before saved protections were restored. Final read-only and tracked
+  no-access protection assertions passed.
+- Overall Windows harness: `failures=0`; section handle closed, backing alias unmapped, fixture
+  placeholders released. Runtime build, existing standalone tests, and Python suite passed.
+
+The detailed `VirtualQuery()` bases, sizes, state/protection values, and child output are retained
+in `docs/windows-memory-test-plan.md` and the check annotations. The first CI attempt on `241ab1da126c893ae80b29d50628b3dbd0e6f51b` ([run
+39838263644](https://github.com/lostpilot404/Uncharted/actions/runs/39838263644)) passed the runtime
+build and existing tests but failed to link the harness because `VirtualAlloc2` required
+`-lonecore`; no API calls ran on that attempt. The standalone link was corrected and the
+successful observation run followed.
+
+Local validation remains separate: the strict GCC compile covers only the Linux branch of
+`runtime_memory.c`; the local Python suite reports 98 tests, 28 skips, and the mutex/condition test
+reports 32 passing checks. Each push triggers an exact-source Runtime CI check; the result on the
+current PR head is the commit-specific verification for review.
 
 ### Fix disposition
 
@@ -1025,5 +1050,5 @@ host modules and are not backed by the runtime placeholder, so guest query/unmap
 would be false and potentially destructive. Candidate CRIT-05/CRIT-06 designs and constraints
 (address-space fragmentation, 64 KiB Windows mapping granularity versus the 16 KiB guest page,
 section offsets/aliasing, GPU page tracking, raw guest-thread access, API failure handling and
-performance) are documented in `docs/windows-memory-test-plan.md` for separate review after the
-native observations are available.
+performance) are documented in `docs/windows-memory-test-plan.md` for separate review in light of
+the native observations.

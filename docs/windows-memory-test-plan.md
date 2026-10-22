@@ -1,6 +1,8 @@
 # Windows memory-management characterization plan
 
-Status: **harness implemented; native Windows execution pending Runtime CI**. No production reservation or carving behavior has been changed.
+Status: **harness implemented; native Windows observations recorded from Runtime CI run
+39843825619**. Every PR head is tested from its verified source SHA. No production reservation
+or carving behavior has been changed.
 
 Baseline verified before editing: `origin/main` and `HEAD` both resolved to
 `5a54fd8d2b8190edb9fd4851f7c71e70e79ea506` (merged PR #6). The checkout was clean. The
@@ -162,11 +164,12 @@ and Windows errors into the job log; a compile error, expected collision that yi
 error, broken fixture, failed cleanup, or inconclusive concurrent probe fails the job with
 captured output.
 
-**No real Windows execution has occurred in the local sandbox.** It has no Windows runtime,
-Wine, or Windows cross-toolchain. Until the new Windows Runtime CI job completes on the exact
-final commit SHA, all Windows API outcomes below remain pending; no expected value is reported as
-an observation. The result section will be updated with the workflow run and exact commit before
-the pull request is presented for review.
+The local sandbox has no Windows runtime, Wine, or Windows cross-toolchain; native API
+observations therefore come from Runtime CI. The CI step records the exact tested source commit,
+Windows API errors, MBI state/protection, child outcomes and cleanup as grouped check annotations,
+and uploads the full output log. The results section below contains measured Windows values, not
+predictions. Runtime CI reruns against the verified exact PR-head source on each push; its check on
+the final PR head is the commit-specific review evidence.
 
 ## Phase 5 — candidate fix review (no fix implemented)
 
@@ -212,11 +215,73 @@ the pull request is presented for review.
   tests; this characterization does not alter that policy.
 
 No production memory-manager rewrite is authorized by this mission or included here. The
-candidate designs require a separate review after Windows evidence is collected.
+candidate designs require a separate follow-up review using the collected Windows evidence.
 
 ## Results
 
-Pending native Windows Runtime CI on the exact final commit. Fill in the run URL, commit SHA,
-actual `GetLastError()` values, child exit codes, `VirtualQuery()` states/protections, concurrent
-probe outcome, and cleanup result here after the workflow completes. Do not replace `pending`
-with predictions.
+A successful native Runtime CI observation run completed at
+[run 39843825619](https://github.com/lostpilot404/Uncharted/actions/runs/39843825619). The
+workflow log recorded `TESTED_SOURCE_COMMIT=abc35da67bffffdc1d3883f066c91d16ca1b4b1d`; although
+GitHub's default job checkout was the synthetic merge commit `4acc2c4ca6e163bd7cf162223fe3bba6a669496f`,
+the harness was built from the separately fetched and SHA-verified PR-head archive. Because this report update is
+documentation-only, the PR's current-head check is also required for final commit-specific
+verification. The values below are observations from Windows, not predictions.
+
+### CRIT-05 — 944 GiB reservation collision
+
+- The child reserved a 64 KiB `MEM_RESERVE_PLACEHOLDER` blocker at the aligned production base
+  `0x0000001000000000`; `VirtualQuery()` reported `State=0x2000` (`MEM_RESERVE`).
+- The direct production-sized `VirtualAlloc2()` probe returned `NULL`; `GetLastError()` was
+  `487` (`ERROR_INVALID_ADDRESS`), matching the expected overlap error.
+- The subsequent production `runtime_memory_reserve()` attempt reached the test-only failure hook
+  with `error=487` and `region_count=0`. `win_fail()` reported the same OS error and the child
+  exited `0x00000015` (decimal 21).
+- Result: **collision reproduced**. No host-unreserved interval was entered into the runtime
+  region table. This validates the deliberate collision path; it does not estimate collision
+  frequency on other processes or machines.
+
+### CRIT-06 — small carve, transient gap, and writable window
+
+- The 1 MiB placeholder fixture at `0x0000001100000000` was reserved with
+  `AllocationProtect=0x1` (`PAGE_NOACCESS`); its initial section view was
+  `State=0x1000` (`MEM_COMMIT`), `Type=0x40000` (`MEM_MAPPED`), `Protect=0x4`
+  (`PAGE_READWRITE`).
+- Production `carve_host()` removed `[0x0000001100030000, 0x0000001100040000)` (64 KiB) from
+  that 1 MiB view. Afterward, `VirtualQuery()` reported committed/mapped left and right views with
+  `Protect=0x2` (`PAGE_READONLY`), the carved center as `State=0x2000` (`MEM_RESERVE`), and the
+  GPU-style tracked page as committed/mapped with `Protect=0x1` (`PAGE_NOACCESS`). The right
+  sibling backing offset was `0x40000`; left/right marker and alias checks passed.
+
+The reported `VirtualQuery()` MBI records were:
+
+| Query point | `BaseAddress` | `RegionSize` | `State` | `Protect` | `Type` | `AllocationProtect` |
+|---|---:|---:|---:|---:|---:|---:|
+| Initial placeholder | `0x0000001100000000` | `0x100000` | `0x2000` | `0x0` | `0x20000` | `0x1` |
+| Initial section view | `0x0000001100000000` | `0x100000` | `0x1000` | `0x4` | `0x40000` | `0x4` |
+| Left after carve (query base+PAGE) | `0x0000001100004000` | `0x10000` | `0x1000` | `0x2` | `0x40000` | `0x4` |
+| Carved center (query carve+PAGE) | `0x0000001100034000` | `0xc000` | `0x2000` | `0x0` | `0x20000` | `0x1` |
+| Right after carve (query end-PAGE) | `0x00000011000fc000` | `0x4000` | `0x1000` | `0x2` | `0x40000` | `0x4` |
+| Tracked no-access page | `0x0000001100014000` | `0x4000` | `0x1000` | `0x1` | `0x40000` | `0x4` |
+| Left during unmap (query base+PAGE) | `0x0000001100004000` | `0xfc000` | `0x2000` | `0x0` | `0x20000` | `0x1` |
+| Right during unmap (query end-PAGE) | `0x00000011000fc000` | `0x4000` | `0x2000` | `0x0` | `0x20000` | `0x1` |
+
+- At the exact post-unmap/pre-reconstruction callback, both sibling queries reported
+  `State=0x2000` (`MEM_RESERVE`), `Protect=0`, `Type=0x20000` (`MEM_PRIVATE` placeholder),
+  while the production table still described the original region as mapped. Result:
+  **transient gap directly observed** by `VirtualQuery()`.
+- In the isolated concurrent child, the worker reached the gate and attempted a volatile read at
+  `0x0000001100004000` while the mapping caller held `write_lock()`. The child exited with
+  `0xC0000005` (`STATUS_ACCESS_VIOLATION`). Result: **controlled access violation reproduced**.
+  This is one contained reproduction; it does not imply every carve crashes.
+- In the separate protection child, left, tracked, and right pages all reported
+  `State=0x1000` and `Protect=0x4` (`PAGE_READWRITE`) immediately before saved protections were
+  restored. Result: **temporary writable protection observed**. Final checks confirmed
+  `PAGE_READONLY` restoration and reinstatement of the tracked `PAGE_NOACCESS` page.
+- Fixture cleanup passed: section handle closed, backing alias unmapped, placeholders released.
+  The harness and existing Runtime CI build, standalone tests and Python suite all passed; the
+  harness reported `RESULT SUMMARY failures=0`.
+
+The Runtime CI check for each PR head is the commit-specific release evidence: it logs the exact
+tested source SHA and emits API errors, MBI state/protection, child outcomes and cleanup evidence
+as grouped check annotations; the full log is uploaded as an artifact. No production reservation
+fallback or carving fix was applied.
