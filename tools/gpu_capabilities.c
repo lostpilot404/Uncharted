@@ -39,6 +39,10 @@ static int better_device(VkPhysicalDevice candidate, VkPhysicalDevice current) {
  * copies scene targets every frame: fine on a strong discrete GPU, 7-8 FPS on the Steam Deck
  * and a GTX 1060. Rule: discrete, at least 8 GB of device memory, and not an NVIDIA GPU older
  * than Turing (no fragment shader barycentrics; its depth/stencil copies take nine draws). */
+/* --memory: the launcher's hardware check (launcher/uncharted_hw.py). Prints the selected
+ * device's device-local memory in MiB on stdout and a "GPU: name, N MiB of video memory" line
+ * on stderr. The README's recommendation (6 GB or more; 4 GB cards run out of memory with
+ * Anti-aliasing or Frame generation on) is applied by the launcher, not here. */
 static int has_extension(VkPhysicalDevice device, const char *name) {
     uint32_t count = 0;
     if (vkEnumerateDeviceExtensionProperties(device, NULL, &count, NULL) != VK_SUCCESS) return 0;
@@ -66,6 +70,7 @@ static int live_resolution_suits(VkPhysicalDevice device) {
 
 int main(int argc, char **argv) {
     const int live_mode = argc > 1 && !strcmp(argv[1], "--live-resolution");
+    const int memory_mode = argc > 1 && !strcmp(argv[1], "--memory");
     const VkApplicationInfo app = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
         .pApplicationName = "bbport scene scaling probe",
@@ -108,6 +113,16 @@ int main(int argc, char **argv) {
     } else {
         for (uint32_t i = 1; i < count; ++i)
             if (better_device(devices[i], selected)) selected = devices[i];
+    }
+    if (memory_mode) {
+        VkPhysicalDeviceProperties mem_props;
+        vkGetPhysicalDeviceProperties(selected, &mem_props);
+        const unsigned long long mib = (unsigned long long)(largest_local_heap(selected) >> 20);
+        fprintf(stderr, "GPU: %s, %llu MiB of video memory\n", mem_props.deviceName, mib);
+        printf("%llu\n", mib);
+        free(devices);
+        vkDestroyInstance(instance, NULL);
+        return 0;
     }
     if (live_mode) {
         printf("%d\n", live_resolution_suits(selected));

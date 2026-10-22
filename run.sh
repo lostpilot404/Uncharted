@@ -70,6 +70,10 @@ fps=${BB_FPS:-uncap}
 # discrete GPUs get them); off when unset. 1080p output and TAA always use the live path.
 if [[ -z ${BB_RENDER_RES:-} ]]; then
     read -r scaled_render scaled_output < <("$PYTHON" scripts/patches.py --print-scaled --settings "$BB_CONFIG") || true
+    # A Windows-hosted Python writes CRLF through the pipe and `read` keeps the CR
+    # (it is not IFS whitespace): strip it so the values never carry a trailing \r.
+    scaled_render=${scaled_render%$'\r'}
+    scaled_output=${scaled_output%$'\r'}
 fi
 live=0
 if [[ -n ${scaled_output:-} ]]; then
@@ -77,6 +81,7 @@ if [[ -n ${scaled_output:-} ]]; then
     # Bash builtins only: the AppImage's PATH has no sed/grep (a missing one ended run.sh silently).
     if [[ -z $live && -f $BB_CONFIG ]]; then
         while IFS= read -r line || [[ -n $line ]]; do
+            line=${line%$'\r'}  # a CRLF bbport.ini from a Windows writer
             [[ $line =~ ^live_resolution=([01]|auto)$ ]] && live=${BASH_REMATCH[1]}
         done < "$BB_CONFIG"
     fi

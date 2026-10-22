@@ -1,0 +1,4 @@
+# Shell scripts must stay LF even on a Windows checkout: a CRLF run.sh leaks "\r"
+# into every value it parses (caught by tests/test_run_settings.py on the Windows
+# CI) and breaks the MSYS2 build scripts in the same way.
+*.sh text eol=lf

@@ -228,7 +228,7 @@ ImageId TextureCache::ResolveDepthOverlap(const ImageInfo& requested_info, Bindi
         auto new_info = requested_info;
         new_info.resources = std::max(requested_info.resources, cache_image.info.resources);
         new_info.UpdateSize();
-        const auto new_image_id = slot_images.insert(instance, runtime, slot_image_views, new_info);
+        const auto new_image_id = InsertImage(new_info);
         RegisterImage(new_image_id);
 
         // Inherit image usage
@@ -479,7 +479,7 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
 }
 
 ImageId TextureCache::ExpandImage(const ImageInfo& info, ImageId image_id) {
-    const auto new_image_id = slot_images.insert(instance, runtime, slot_image_views, info);
+    const auto new_image_id = InsertImage(info);
     RegisterImage(new_image_id);
 
     auto& src_image = slot_images[image_id];
@@ -495,6 +495,35 @@ ImageId TextureCache::ExpandImage(const ImageInfo& info, ImageId image_id) {
     FreeImage(image_id);
     TrackImage(new_image_id);
     return new_image_id;
+}
+
+ImageId TextureCache::InsertImage(const ImageInfo& info) {
+    ImageId image_id = slot_images.insert(instance, runtime, slot_image_views, info);
+    if (!slot_images[image_id].IsAllocFailed()) {
+        return image_id;
+    }
+    // bbport: out of video memory (issue #256; the README's 4 GB cards). The failed slot holds
+    // no GPU resources and is not registered anywhere: drop it, evict idle textures and retry
+    // once before failing hard.
+    slot_images.erase(image_id);
+    LOG_WARNING(Render_Vulkan,
+                "Image allocation failed ({}x{}x{} {}), evicting idle textures and retrying",
+                info.size.width, info.size.height, info.size.depth,
+                vk::to_string(info.pixel_format));
+    GarbageCollectImagesLocked(true);
+    image_id = slot_images.insert(instance, runtime, slot_image_views, info);
+    if (!slot_images[image_id].IsAllocFailed()) {
+        return image_id;
+    }
+    slot_images.erase(image_id);
+    ASSERT_MSG(false,
+               "Out of video memory for a {}x{}x{} {} image ({} bytes guest memory) after "
+               "evicting idle textures; device usage {} of budget {} MiB",
+               info.size.width, info.size.height, info.size.depth, vk::to_string(info.pixel_format),
+               info.guest_size,
+               instance.CanReportMemoryUsage() ? instance.GetDeviceMemoryUsage() >> 20 : u64{0},
+               instance.GetTotalMemoryBudget() >> 20);
+    return {};
 }
 
 ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
@@ -602,7 +631,7 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     }
     // Create and register a new image
     if (!image_id) {
-        image_id = slot_images.insert(instance, runtime, slot_image_views, info);
+        image_id = InsertImage(info);
         RegisterImage(image_id);
     }
 
@@ -750,7 +779,12 @@ ImageView& TextureCache::FindDepthTarget(ImageId image_id, const ImageDesc& desc
             info.guest_address = desc.info.stencil_addr;
             info.guest_size = desc.info.stencil_size;
             info.size = desc.info.size;
-            stencil_id = slot_images.insert(instance, runtime, slot_image_views, info);
+            // bbport: creating an image can run the collector when out of video memory
+            // (InsertImage), and RegisterImage writes the page table the fault handlers walk
+            // under this lock: hold it around the create-and-register block (rare, one stencil
+            // image per depth surface).
+            std::scoped_lock lock{mutex};
+            stencil_id = InsertImage(info);
             RegisterImage(stencil_id);
         }
         Image& stencil_image = slot_images[stencil_id];
@@ -1016,6 +1050,11 @@ void TextureCache::UntrackImageTail(ImageId image_id) {
 }
 
 void TextureCache::GarbageCollectImages() {
+    std::scoped_lock lock{mutex};
+    GarbageCollectImagesLocked(false);
+}
+
+void TextureCache::GarbageCollectImagesLocked(bool force) {
     if (instance.CanReportMemoryUsage()) {
         total_used_memory = instance.GetDeviceMemoryUsage();
         // bbport: on integrated GPUs (Steam Deck) the usage covers system-memory heaps holding
@@ -1037,18 +1076,19 @@ void TextureCache::GarbageCollectImages() {
             }
         }
     }
-    if (total_used_memory < trigger_gc_memory) {
+    if (!force && total_used_memory < trigger_gc_memory) {
         return;
     }
-    std::scoped_lock lock{mutex};
     bool pressured = false;
     bool aggresive = false;
     u64 ticks_to_destroy = 0;
     size_t num_deletions = 0;
 
     const auto configure = [&](bool allow_aggressive) {
-        pressured = total_used_memory >= pressure_gc_memory;
-        aggresive = allow_aggressive && total_used_memory >= critical_gc_memory;
+        // bbport: a forced pass (allocation retry) evicts like the critical pass even when the
+        // budget accounting does not say "critical" yet.
+        pressured = force || total_used_memory >= pressure_gc_memory;
+        aggresive = allow_aggressive && (force || total_used_memory >= critical_gc_memory);
         // bbport: critical used 160 ticks, longer than pressure's 80, so the aggressive pass
         // never freed more than the first one (#256).
         ticks_to_destroy = aggresive ? 40 : pressured ? 80 : 16;
@@ -1079,7 +1119,9 @@ void TextureCache::GarbageCollectImages() {
         }
         ++gc_evictions;
         FreeImage(image_id);
-        if (total_used_memory < critical_gc_memory) {
+        // bbport: a forced pass (allocation retry) keeps evicting up to its budget: the driver
+        // budget figures can read below the marks while a real allocation still fails.
+        if (!force && total_used_memory < critical_gc_memory) {
             if (aggresive) {
                 num_deletions >>= 2;
                 aggresive = false;
@@ -1097,8 +1139,8 @@ void TextureCache::GarbageCollectImages() {
     configure(false);
     lru_cache.ForEachItemBelow(gc_tick - ticks_to_destroy, clean_up);
 
-    if (total_used_memory >= critical_gc_memory) {
-        // If we are still over the critical limit, run an aggressive GC
+    if (force || total_used_memory >= critical_gc_memory) {
+        // If we are still over the critical limit (or an allocation is waiting), run an aggressive GC
         configure(true);
         lru_cache.ForEachItemBelow(gc_tick - ticks_to_destroy, clean_up);
     }

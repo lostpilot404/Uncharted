@@ -26,16 +26,18 @@ class RestartResolutionTests(unittest.TestCase):
             (out / 'eboot.elf').write_bytes(elf)
             (data / 'eboot.bin').touch()
             config = data / 'bbport.ini'
-            config.write_text('upscaler=fsr3\npreset=1\noutput_res=1280x720\n' + ini_extra)
+            config.write_text('upscaler=fsr3\npreset=1\noutput_res=1280x720\n' + ini_extra,
+                              newline='\n')  # run.sh parses it: keep LF on Windows
             if caps is not None:  # the GPU check next to the probe (live_resolution=auto)
                 tool = data / 'bb-gpu-capabilities'
-                tool.write_text(f'#!/bin/sh\necho {caps}\n')
+                tool.write_text(f'#!/bin/sh\necho {caps}\n', newline='\n')
                 tool.chmod(0o755)
             python = data / 'python'
             python.write_text(f'#!{sys.executable}\n' +
                 'import subprocess, sys\n'
                 'if sys.argv[1] in ("scripts/patches.py", "scripts/mods.py"):\n'
-                '    sys.exit(subprocess.call([sys.executable, *sys.argv[1:]]))\n')
+                '    sys.exit(subprocess.call([sys.executable, *sys.argv[1:]]))\n',
+                newline='\n')
             python.chmod(0o755)
             probe = data / 'probe'
             probe.write_text(f'#!{sys.executable}\n' +
@@ -48,7 +50,7 @@ class RestartResolutionTests(unittest.TestCase):
                 '("BB_RENDER_RES", "BB_OUTPUT_RES", "BB_AUTO_RENDER_RES")})+"\\n")\n'
                 'if stage<2:\n'
                 '    config.write_text("upscaler=fsr3\\npreset=4\\noutput_res="+'
-                '("1280x720" if stage==0 else "1920x1080")+"\\n")\n'
+                '("1280x720" if stage==0 else "1920x1080")+"\\n", newline="\\n")\n'
                 '    os.environ["BB_TEST_STAGE"]=str(stage+1)\n'
                 '    os.execlp("bash", "bash", "run.sh")\n')
             probe.chmod(0o755)
@@ -67,8 +69,12 @@ class RestartResolutionTests(unittest.TestCase):
                 for name in ('bash', 'dirname', 'mkdir', 'realpath'):
                     (tools / name).symlink_to(shutil.which(name))
                 env['PATH'] = str(tools)
-            subprocess.run([shutil.which('bash'), 'run.sh'], cwd=ROOT, env=env,
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=30)
+            result = subprocess.run([shutil.which('bash'), 'run.sh'], cwd=ROOT, env=env,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+            if result.returncode:
+                self.fail(f'run.sh exited {result.returncode}\nstdout:\n'
+                          f'{result.stdout.decode(errors="replace")}\nstderr:\n'
+                          f'{result.stderr.decode(errors="replace")}')
             return [json.loads(line) for line in (data / 'environments').read_text().splitlines()]
 
     def test_outputs_other_than_1080p_patch_the_render_size_and_restarts_recompute_it(self):
@@ -95,6 +101,8 @@ class RestartResolutionTests(unittest.TestCase):
         self.assertEqual(self.run_restarts(ini_extra='live_resolution=auto\n', caps=0)[0]['BB_RENDER_RES'],
                          '854x480')
 
+    @unittest.skipIf(sys.platform == 'win32',
+                     'AppImage PATH scenario: a dir of POSIX coreutils symlinks')
     def test_live_resolution_without_sed_or_grep(self):
         # A missing sed ended run.sh (exit 127) before the game in the AppImage on NixOS.
         self.assertEqual(self.run_restarts(ini_extra='live_resolution=0\n', caps=1,
