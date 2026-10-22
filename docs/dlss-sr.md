@@ -69,7 +69,9 @@ size, so the two cannot drift apart.
 jitter, in the layout FSR 3.1 already used:
 
 - colour: the scene proxy, `R16G16B16A16Sfloat`, top-left `w × h` of the aligned target;
-- depth: the scene depth proxy at the same size, with the inverted-depth flag when the game uses it;
+- depth: the scene depth proxy at the same size, flagged reversed-Z (the convention these games
+  write; `BB_DLSS_DEPTH_INVERTED=0` / `dlss_depth_inverted=0` flips it if reprojection looks
+  wrong on a machine — it is the one input no CI runner could confirm);
 - motion: `R16G16Sfloat`, render-resolution pixels, current → previous; toggle `1 << 26`
   flips the sign for a build or driver with the opposite convention;
 - jitter: the pattern FSR 3.1 uses, in render pixels (toggle `1 << 25` turns jitter off),
@@ -133,6 +135,10 @@ are unverified until someone runs them.
 3. In the in-game menu (Insert), *Активный рендер сцены* must read `1280 x 720`.
 4. Set *Render size* to *Native AA*: the log switches to `render 1920x1080 ... (DLAA: native
    resolution)` — DLAA is not upscaling.
-5. Compare frame time and image quality against FSR 3.1 Quality at the same output size.
-6. Confirm Frame generation stayed off: the menu's frame-generation entry is *Выкл*, and the
+5. Compare frame time and image quality against FSR 3.1 Quality at the same output size. If
+   edges smear or ghost, try `BB_DLSS_DEPTH_INVERTED=0` and report which one was better: the
+   depth convention is the only DLSS input CI cannot check.
+6. The DLSS render-preset letter (A..K) stays at the SDK default for the quality class; only
+   the quality class is chosen by the preset.
+7. Confirm Frame generation stayed off: the menu's frame-generation entry is *Выкл*, and the
    log has no `Frame Generation available` line.

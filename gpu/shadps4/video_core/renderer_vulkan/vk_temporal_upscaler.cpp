@@ -342,10 +342,11 @@ bool TemporalUpscaler::OnFrameStart() {
         // The sizes actually in use, so a log alone proves SR (smaller input) vs DLAA (equal).
         const auto in = scaled_session ? SceneResolution::Size{target_width, target_height}
                                        : scene_targets.Size();
-        std::printf("Upscaler: DLSS %s, render %ux%u -> output %ux%u%s\n",
+        std::printf("Upscaler: DLSS %s, render %ux%u -> output %ux%u%s, depth %s\n",
                     DlssSr::NameForPreset(preset), in.width, in.height, target_width,
                     target_height,
-                    in.width < target_width ? "" : " (DLAA: native resolution)");
+                    in.width < target_width ? "" : " (DLAA: native resolution)",
+                    settings.dlss_depth_inverted ? "inverted (reversed-Z)" : "not inverted");
     }
     if (changed || !dispatched_last_frame) reset = true;
     if (changed) jitter_index = 0;

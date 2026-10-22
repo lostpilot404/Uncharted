@@ -142,7 +142,7 @@ int main() {
     const char* const path = file.c_str();
     TestEnv::Set("BB_CONFIG", path);
     for (const char* name : {"BB_UPSCALER", "BB_UPSCALE_PRESET", "BB_SR_VELOCITY", "BB_RENDER_RES",
-                             "BB_FRAME_GEN", "BB_FRAME_GEN_MULTIPLIER"}) {
+                             "BB_FRAME_GEN", "BB_FRAME_GEN_MULTIPLIER", "BB_DLSS_DEPTH_INVERTED"}) {
         TestEnv::Unset(name);
     }
     auto& s = Get();
@@ -187,6 +187,20 @@ int main() {
     assert(!VelocityScaledPreset(true, s.sr_velocity.load(), s.upscaler, RenderPreset()));
     assert(MakePlan(1920, 1080, NativeAA).Upscales() == false);
     assert(s.frame_gen == FrameGenOff);
+
+    // The depth convention is on by default (the games write reversed-Z) and can be changed.
+    assert(s.dlss_depth_inverted);
+    TestEnv::Set("BB_DLSS_DEPTH_INVERTED", "0");
+    Load();
+    assert(!s.dlss_depth_inverted);
+    TestEnv::Set("BB_DLSS_DEPTH_INVERTED", "1");
+    Load();
+    assert(s.dlss_depth_inverted);
+    TestEnv::Unset("BB_DLSS_DEPTH_INVERTED");
+    Save(); // saved, so a restart keeps the choice
+    s.dlss_depth_inverted = false;
+    Load();
+    assert(s.dlss_depth_inverted);
 
     // TAA is native-resolution by construction: an SR preset must not be applied to it.
     s.upscaler = UpscalerTaa;

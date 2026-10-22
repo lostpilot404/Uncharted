@@ -10,6 +10,7 @@
 #include <optional>
 #include <string_view>
 
+#include "bbport_settings.h"
 #include "video_core/renderer_vulkan/dlss_sr.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
 
@@ -214,9 +215,12 @@ bool Dlss::CreateFeature(vk::CommandBuffer command, const FeatureDesc& desc) {
         return false;
     }
     impl->feature.reset();
+    // The render-preset letter stays at 0 (the SDK's own default for the quality class);
+    // the depth convention is the games' reversed-Z, overridable for validation on a GPU.
     const BbDlssFeature feature{desc.input_width,  desc.input_height, desc.output_width,
                                 desc.output_height, desc.quality,      0,
-                                0,                  desc.hdr ? 1 : 0};
+                                BbSettings::Get().dlss_depth_inverted ? 1 : 0,
+                                desc.hdr ? 1 : 0};
     if (!impl->api->CreateFeature(command, &feature)) {
         return false;
     }

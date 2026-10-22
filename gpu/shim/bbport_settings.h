@@ -109,6 +109,9 @@ struct Values {
     /// Why FSR 4 cannot run (assets, device features), or null. Set by the renderer.
     std::atomic<const char*> fsr4_problem{nullptr};
     std::atomic<bool> fsr4_supported{false}, fsr411_supported{false};
+    /// DLSS depth convention: the games write reversed-Z (1 = near). Exposed because only a
+    /// GPU can confirm it (BB_DLSS_DEPTH_INVERTED / dlss_depth_inverted in bbport.ini).
+    std::atomic<bool> dlss_depth_inverted{true};
     /// DLSS (bbport_dlss.dll, NVIDIA RTX) is ready, or why not (null before the device exists).
     std::atomic<bool> dlss_supported{false};
     std::atomic<const char*> dlss_problem{nullptr};
