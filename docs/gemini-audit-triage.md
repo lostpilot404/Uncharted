@@ -1108,3 +1108,20 @@ temporary writable protection observed). The first run on `b91296a` failed on th
 bugs (under-sized direct allocations in the test children), not on production code; they are
 fixed and re-verified in `19b3a36`. PR: https://github.com/lostpilot404/Uncharted/pull/8
 (not merged automatically).
+
+Mission 7.4 update (CRIT-06, PR #9, not merged): CRIT-06 is now split into hazard A
+(transient missing views under concurrent raw-pointer access) and hazard B (temporary
+`PAGE_READWRITE` during sibling reconstruction). Hazard B is FIXED: `view_map()` maps
+directly at the target protection, rebuilt siblings start at the least-privilege protection
+common to their saved runs, and every saved run is restored (with the empirically verified
+Windows constraint that `VirtualProtect` rejects a `PAGE_NOACCESS`-mapped view, error 87,
+so mixed siblings start `PAGE_READONLY` — never writable — and `PAGE_NOACCESS` runs are
+lowered from there). The harness protection child is a strict regression gate across
+repeated carves plus a direct `PAGE_NOACCESS` map test. Runtime CI run 39976081866 tested
+exact source `a010580d02dfc31cd1f78301e51e1dbc48a040fa`: `RESULT SUMMARY failures=0`,
+`CRIT-05=FIXED` retained, `CRIT-06.temporary_protection=FIXED`, while hazard A remains
+characterized (`gap=DIRECTLY_OBSERVED`, `concurrent_access=ACCESS_VIOLATION_REPRODUCED`
+0xC0000005). Hazard A remains UNRESOLVED: no safepoint/thread registry exists and a
+provably complete stop-the-world is not safely implementable in this codebase yet;
+smallest next step is guest-thread registration plus a cooperative HLE-boundary safepoint.
+PR: https://github.com/lostpilot404/Uncharted/pull/9 (not merged automatically).
