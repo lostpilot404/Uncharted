@@ -349,10 +349,13 @@ static void view_map(const HostRegion *r, DWORD protect) {
     if (!MapViewOfFile3(section,GetCurrentProcess(),(void *)r->start,r->phys,r->end-r->start,MEM_REPLACE_PLACEHOLDER,protect,NULL,0))
         win_fail("MapViewOfFile3",r->start,r->end-r->start);
 }
-/* Least-privilege initial protection for a rebuilt view: readable/writable/executable only
- * where every saved run allows it, so the view is never more permissive than the protections
- * save_protections() recorded (CRIT-06 hazard B). Runs are restored individually afterwards;
- * until then the view may be less permissive than saved, never more. */
+/* Initial protection for a rebuilt view (CRIT-06 hazard B): writable/executable only where
+ * every saved run allows it, so reconstruction never reintroduces a writable window for a
+ * sibling whose saved runs were not all writable. Read permission is also intersected,
+ * except for one documented fallback below: a mixed sibling containing PAGE_NOACCESS runs
+ * starts PAGE_READONLY because Windows cannot restore protections from a PAGE_NOACCESS
+ * view, temporarily making those originally PAGE_NOACCESS pages readable. Runs are restored
+ * individually afterwards, reinstating each original per-run protection. */
 static DWORD protect_initial(const ProtRun *runs, size_t n) {
     if (!n) return PAGE_NOACCESS;
     int may_read=1, may_write=1, may_exec=1;

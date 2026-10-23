@@ -398,14 +398,19 @@ code has no polling point, fibers migrate contexts across host threads, and GPU 
 are unregistered, so a provably complete stop-the-world cannot be built safely in this
 mission (`SuspendThread` could freeze a holder of a lock the carver needs). Smallest next
 step: guest-thread registration plus a cooperative safepoint at HLE boundaries, separately
-designed. **Hazard B** (temporary `PAGE_READWRITE` during sibling reconstruction, including
-a GPU-tracked `PAGE_NOACCESS` page) is **fixed** on PR #9:
+designed. For **Hazard B** (temporary `PAGE_READWRITE` during sibling reconstruction,
+including a GPU-tracked `PAGE_NOACCESS` page), PR #9 eliminates the tested temporary
+writable reconstruction window, with the temporary read-only limitation disclosed below:
 
 - `view_map()` maps directly at the target protection via `MapViewOfFile3` (which accepts
   `PAGE_NOACCESS`); the writable intermediate plus `VirtualProtect` fixup is gone.
-- Rebuilt siblings start at `protect_initial()`: the least-privilege protection that is a
-  subset of every saved run (never writable/executable beyond saved runs), and the restore
-  loop applies every saved run that differs from it.
+- Rebuilt siblings start at the common initial protection computed by `protect_initial()`:
+  it never grants write or execute permission unless every saved run for that sibling allows
+  it. It is **not** always a subset of every saved run: for a mixed sibling containing
+  `PAGE_NOACCESS` runs, the `PAGE_READONLY` fallback described below temporarily makes the
+  originally `PAGE_NOACCESS` pages readable. The restore loop then applies every saved run
+  that differs from the initial protection, reinstating the original per-run protections
+  after reconstruction.
 - One Windows constraint was found empirically, not assumed: a wholly `PAGE_NOACCESS`
   initial view cannot be restored, because `VirtualProtect` on a `PAGE_NOACCESS`-mapped
   view fails with `ERROR_INVALID_PARAMETER` (87) — observed as
@@ -414,7 +419,11 @@ a GPU-tracked `PAGE_NOACCESS` page) is **fixed** on PR #9:
   writable) and the saved `PAGE_NOACCESS` runs are lowered from there, the direction
   `VirtualProtect` accepts; a wholly `PAGE_NOACCESS` sibling is mapped `PAGE_NOACCESS`
   directly and needs no restore call. The disclosed transient cost is a read-only (never
-  writable/executable) window over tracked pages of a mixed sibling.
+  writable/executable) window over originally `PAGE_NOACCESS` tracked pages of a mixed
+  sibling. In other words, this fix eliminates the tested temporary `PAGE_READWRITE`
+  reconstruction window; it does **not** continuously preserve every saved page protection,
+  because original `PAGE_NOACCESS` pages in a mixed sibling can be temporarily readable
+  until the restore loop lowers them back to `PAGE_NOACCESS`.
 - The harness protection child is now a strict regression gate, not characterization: the
   hook OR-accumulates any `PAGE_READWRITE` observed on any committed fixture page across a
   first carve **and a repeated carve of an already-rebuilt sibling**, the tracked page is
@@ -423,8 +432,8 @@ a GPU-tracked `PAGE_NOACCESS` page) is **fixed** on PR #9:
   Gap and concurrent children are retained unchanged as hazard-A characterization; no
   no-access-violation assertion was added.
 
-Native evidence: [Runtime CI run 39976081866](https://github.com/lostpilot404/Uncharted/actions/runs/39976081866)
-on PR #9, `TESTED_SOURCE_COMMIT=a010580d02dfc31cd1f78301e51e1dbc48a040fa` (== PR head at
+Native evidence: [Runtime CI run 39977900549](https://github.com/lostpilot404/Uncharted/actions/runs/39977900549)
+on PR #9, `TESTED_SOURCE_COMMIT=b25bf34565cb4fb28e1dbc953a0104646b6a7356` (== PR head at
 verification time; the harness was built from the SHA-verified PR-head archive). Reported:
 
 ```text
@@ -437,14 +446,21 @@ RESULT SUMMARY failures=0
 ```
 
 Per-carve hook observations in that run: first carve `left_protect=0x2 tracked_protect=0x2
-right_protect=0x2` (read-only fallback for the mixed left sibling, per the Windows
-constraint above), repeat carve `left_protect=0x2 tracked_protect=0x1 right_protect=0x2`;
-no `PAGE_READWRITE` (`0x4`) was observed at any reconstruction point. The Windows package
-workflow also succeeded on the same head
-([run 39976081832](https://github.com/lostpilot404/Uncharted/actions/runs/39976081832);
-the earlier post-merge package failure on main was a checkout/submodule network failure,
-not a compilation failure). Local (Linux) validation: `src/runtime_memory.c` compiles with
-GCC `-Wall -Wextra -Werror`; the harness itself only compiles/runs on Windows CI.
+right_protect=0x2` (the originally `PAGE_NOACCESS` tracked page was temporarily
+`PAGE_READONLY` during mixed-sibling reconstruction, per the Windows constraint above, and
+was restored to `PAGE_NOACCESS` afterward), repeat carve `left_protect=0x2
+tracked_protect=0x1 right_protect=0x2`; no `PAGE_READWRITE` (`0x4`) was observed at any
+reconstruction point in either carve. The Windows package workflow
+([run 39977900593](https://github.com/lostpilot404/Uncharted/actions/runs/39977900593)) and
+Rust launcher CI
+([run 39977900683](https://github.com/lostpilot404/Uncharted/actions/runs/39977900683)) also
+succeeded on the same head; the earlier post-merge package failure on main was a
+checkout/submodule network failure, not a compilation failure. Local (Linux) validation:
+`src/runtime_memory.c` compiles with GCC `-Wall -Wextra -Werror`; the harness itself only
+compiles/runs on Windows CI.
 
-**CRIT-06 overall remains partially open**: protection safety (hazard B) is fixed and
-regression-gated; concurrency safety (hazard A) is still characterized, not fixed.
+**CRIT-06 overall remains partially open**: the temporary writable reconstruction window
+tested here (hazard B) is eliminated and regression-gated, subject to the temporary
+read-only widening over original `PAGE_NOACCESS` pages in mixed siblings disclosed above;
+concurrency safety (hazard A) is still characterized, not fixed — sibling views are
+transiently absent and concurrent raw-pointer access can still cause an access violation.
