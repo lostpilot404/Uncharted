@@ -111,6 +111,74 @@ jobs:
           echo "::notice title=standalone-test::coroutine-frames-test ran and passed"
           echo "::notice title=standalone-test::content-test ran and passed"
           echo "::notice title=standalone-test::mutex-cond-test ran and passed (destroyed cond handles reported, statistics race-free)"
+
+      - name: Windows memory characterization (native Win32 APIs)
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          log=out/windows-memory-characterization.log
+          : > "$log"
+          run_checked() {
+            local what="$1"; shift
+            local output status=0
+            output=$("$@" 2>&1) || status=$?
+            printf '%s\n' "$output" | tee -a "$log"
+            if (( status )); then
+              echo "::error title=windows-memory::$what failed with exit $status"
+              printf '%s\n' "$output" | sed $'s/\x1b\\[[0-9;]*m//g' | tail -40 | \
+                awk '{line=$0; gsub(/%/, "%25", line); gsub(/\r/, "%0D", line); gsub(/\n/, "%0A", line); print "::error title=windows-memory::" line}'
+              return "$status"
+            fi
+            return 0
+          }
+          # For PRs, fetch the PR head ref and build an archive of that exact commit; the
+          # default checkout is GitHub's synthetic merge commit. Push runs use GITHUB_SHA.
+          expected_source_commit='${{ github.event.pull_request.head.sha || github.sha }}'
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            pr_number='${{ github.event.pull_request.number }}'
+            git fetch --no-tags --depth=1 origin "refs/pull/$pr_number/head" 2>&1 | tee -a "$log"
+            source_commit=$(git rev-parse FETCH_HEAD)
+            if [[ "$source_commit" != "$expected_source_commit" ]]; then
+              message="fetched PR source $source_commit differs from expected $expected_source_commit"
+              printf 'ERROR: %s\n' "$message" | tee -a "$log" >&2
+              echo "::error title=windows-memory::$message"
+              exit 1
+            fi
+          else
+            source_commit="$expected_source_commit"
+          fi
+          source_root=out/windows-memory-source
+          mkdir -p "$source_root"
+          git archive "$source_commit" | tar -x -C "$source_root"
+          echo "TESTED_SOURCE_COMMIT=$source_commit" | tee -a "$log"
+          echo "CHECKED_OUT_WORKFLOW_COMMIT=$(git rev-parse HEAD)" | tee -a "$log"
+          # This one-TU harness includes production runtime_memory.c from the exact source commit
+          # and stubs only its two unrelated project-level references. No GPU/runtime libraries.
+          run_checked compile clang -std=c11 -O2 -g -Wall -Wextra -Werror -pthread \
+            -I"$source_root/src" "$source_root/tests/test_windows_memory.c" -lonecore \
+            -o out/windows-memory-test.exe
+          run_checked execute out/windows-memory-test.exe
+          emit_notice() {
+            local topic="$1" pattern="$2" text
+            text=$(grep -E "$pattern" "$log" | awk 'BEGIN { ORS = " | " } { print }') || true
+            if [[ -n "$text" ]]; then
+              text=${text% | }
+              text=${text//%/%25}
+              text=${text//$'\r'/%0D}
+              echo "::notice title=windows-memory::$topic: $text"
+            fi
+          }
+          # Keep evidence in a few compact annotations (GitHub limits per-step annotations).
+          emit_notice 'CRIT-05' '^(RESULT CRIT-05=|COLLISION_BLOCKER=|COLLISION_PROBE |TEST_HOOK_RESERVATION_FAILURE |STOP: reserving|--- CRIT-05)'
+          emit_notice 'CRIT-06 carve' '^(RESULT CRIT-06\.fixture=|PHASE2_RESULT |FIXTURE_(PLACEHOLDER|INITIAL_VIEW|CLEANUP=)|CARVE_(LEFT|MIDDLE|RIGHT|TRACKED_NOACCESS) |--- CRIT-06 section-backed carve)'
+          emit_notice 'CRIT-06 gap' '^(RESULT CRIT-06\.gap=|GAP_(LEFT|RIGHT)_DURING_UNMAP |GAP_DIRECTLY_OBSERVED=|--- CRIT-06 direct gap)'
+          emit_notice 'CRIT-06 concurrent' '^(RESULT CRIT-06\.concurrent_access=|CONCURRENT_ACCESS_(GATE|ATTEMPT|COMPLETED)=|--- CRIT-06 isolated concurrent access)'
+          emit_notice 'CRIT-06 protection' '^(RESULT CRIT-06\.temporary_protection=|TEMP_WRITABLE_PROTECTION=|--- CRIT-06 temporary protection)'
+          emit_notice 'overall' '^(RESULT SUMMARY|PASS: Windows memory)'
+          echo "::notice title=windows-memory::tested_source_commit=$source_commit"
+          echo "::notice title=windows-memory::workflow_checkout_commit=$(git rev-parse HEAD)"
+
       - name: Python test suite
         shell: msys2 {0}
         run: |
@@ -127,6 +195,13 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$out" | grep -E '^(OK|FAILED|Ran )'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-memory-characterization
+          path: out/windows-memory-characterization.log
+          if-no-files-found: ignore
+          retention-days: 90
       - uses: actions/upload-artifact@v4
         with:
           name: windows-runtime

@@ -5,7 +5,7 @@ Branch: `arena/3219e6b1-uncharted`
 Baseline commit: `5fe65e3697ee2f4a739a8793cd21ed8fdc2a42af`
 Fix commit: `05647f1ccfc137ac7ecc4fc0e41c5a93f83ae40b` (CI notice follow-up: `bf2f7db`;
 test-harness follow-up: `595aea4`)
-Pull request: [#6](https://github.com/lostpilot404/Uncharted/pull/6) — open, not merged
+Pull request: [#6](https://github.com/lostpilot404/Uncharted/pull/6) — merged into `main` at `5a54fd8d2b8190edb9fd4851f7c71e70e79ea506`
 
 This document triages every entry of the supplied `Gemini.md` (3,696 lines, 11,750 words,
 24 ledger entries, 4 supplemental fix sections) against the **current** source, the historical
@@ -962,3 +962,93 @@ out/mutex-cond-test.exe
   green (`test_dlss_sr`, `test_upscaler_support`) after the edit.
 - The fix and its test form one commit; the triage report is a separate documentation commit, so
   the behavioural diff can be reviewed on its own.
+
+---
+
+## 13. Mission 7.2 — Windows memory characterization follow-up
+
+This section supersedes the earlier §3.3/§11 statements that CRIT-05/CRIT-06 had no Windows test
+harness. It does **not** claim either finding is fixed.
+
+### Verified base and source
+
+A fresh fetch resolved `origin/main` to `5a54fd8d2b8190edb9fd4851f7c71e70e79ea506`, and local
+`HEAD` was exactly the same SHA with a clean working tree before edits. This is the merged PR #6
+base specified for Mission 7.2. Work is on the active Arena session branch
+`arena/6c7fcfd7-uncharted`, which began at this verified base; the earlier merged PR branch was
+not reused. The mutex/condition-variable implementation and
+`tests/test_mutex_cond.c` are present; the latter was rebuilt with GCC `-Wall -Wextra -Werror` and
+ran successfully here (32 checks). The supplied `Gemini.md` is not tracked in this checkout; the
+existing triage is `docs/gemini-audit-triage.md`.
+
+Reinspection of `src/runtime_memory.c` confirmed the production parameters and sequence:
+`USER_MIN=0x1000000000`, `USER_MAX=0xfc00000000`, one full-range
+`VirtualAlloc2(MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS)`, failure via `win_fail()`
+(exit 21), and insertion into the Windows `HostRegion` table only after reservation success.
+`carve_host()` unmaps mapped views before coalescing/splitting placeholders and reconstructing
+survivors; reconstruction uses `PAGE_READWRITE` and saved protection runs are restored later.
+
+### Harness and current evidence state
+
+`tests/test_windows_memory.c` includes the complete production `runtime_memory.c` to test the
+actual static `host_map()`, `view_map()` and `carve_host()` implementations without copying them.
+The minimal standalone link boundary is Win32 + onecore + C runtime + winpthreads, with inert
+stubs for the unexercised `runtime_lookup()` and `compat_sleep_ns()` project references. The
+fixture reserves only 1 MiB, records the test range only after `VirtualAlloc2()` succeeds, and
+exercises a 64 KiB
+interior carve. Test-only callbacks in `runtime_memory.c` are guarded by
+`BB_WINDOWS_MEMORY_TEST` and are absent from normal builds.
+
+Runtime CI compiles and executes the Windows-native harness from the exact PR-head SHA (it
+verifies GitHub's PR-head ref) and retains its output log, without replacing existing steps. The
+harness reports collision errors/child exits/table state, section-backed mapping and offsets,
+direct `VirtualQuery()` observations, concurrent access, temporary protections, restoration and
+cleanup. Access-violation classification is independent of direct gap observation; a gap does
+not imply every execution crashes.
+
+A successful native Windows run is recorded at [Runtime CI run 39843825619](https://github.com/lostpilot404/Uncharted/actions/runs/39843825619).
+The log confirms the harness was built from the exact PR-head source commit
+`abc35da67bffffdc1d3883f066c91d16ca1b4b1d` (the workflow's synthetic merge checkout was
+`4acc2c4ca6e163bd7cf162223fe3bba6a669496f`). Observed outcomes:
+
+- CRIT-05: the 64 KiB placeholder blocker at `USER_MIN` was reserved (`VirtualQuery` state
+  `0x2000`); the exact 944 GiB `VirtualAlloc2` probe returned `NULL` with `GetLastError()=487`
+  (`ERROR_INVALID_ADDRESS`). Production failure hook also captured 487 with `region_count=0`;
+  `win_fail()` emitted 487 and child exit was decimal 21 (`0x15`).
+- CRIT-06 fixture: the 64 KiB interior carve in a 1 MiB section view passed. Left/right states
+  were `MEM_COMMIT`/`MEM_MAPPED` with `PAGE_READONLY` (`0x2`); the center was `MEM_RESERVE`
+  (`0x2000`); the tracked page was restored to `PAGE_NOACCESS` (`0x1`). The right section offset
+  was `0x40000`; alias/data and cleanup checks passed.
+- Direct gap: both surviving sibling queries reported `MEM_RESERVE` (`0x2000`), `Protect=0`,
+  `Type=MEM_PRIVATE` (`0x20000`) before reconstruction, while the region table still said
+  mapped. The isolated worker reached the gate and its read reproduced
+  `STATUS_ACCESS_VIOLATION` (`0xC0000005`).
+- Temporary protection: left, tracked, and right pages each reported `MEM_COMMIT` with
+  `PAGE_READWRITE` (`0x4`) before saved protections were restored. Final read-only and tracked
+  no-access protection assertions passed.
+- Overall Windows harness: `failures=0`; section handle closed, backing alias unmapped, fixture
+  placeholders released. Runtime build, existing standalone tests, and Python suite passed.
+
+The detailed `VirtualQuery()` bases, sizes, state/protection values, and child output are retained
+in `docs/windows-memory-test-plan.md` and the check annotations. The first CI attempt on `241ab1da126c893ae80b29d50628b3dbd0e6f51b` ([run
+39838263644](https://github.com/lostpilot404/Uncharted/actions/runs/39838263644)) passed the runtime
+build and existing tests but failed to link the harness because `VirtualAlloc2` required
+`-lonecore`; no API calls ran on that attempt. The standalone link was corrected and the
+successful observation run followed.
+
+Local validation remains separate: the strict GCC compile covers only the Linux branch of
+`runtime_memory.c`; the local Python suite reports 98 tests, 28 skips, and the mutex/condition test
+reports 32 passing checks. Each push triggers an exact-source Runtime CI check; the result on the
+current PR head is the commit-specific verification for review.
+
+### Fix disposition
+
+No production reservation fallback or carving rewrite was applied. A retry at a different host
+base is not acceptable if it violates guest address identity. In particular, the Gemini proposal
+to record host-occupied addresses as guest-reserved VMAs is rejected: those bytes are owned by
+host modules and are not backed by the runtime placeholder, so guest query/unmap/protect behavior
+would be false and potentially destructive. Candidate CRIT-05/CRIT-06 designs and constraints
+(address-space fragmentation, 64 KiB Windows mapping granularity versus the 16 KiB guest page,
+section offsets/aliasing, GPU page tracking, raw guest-thread access, API failure handling and
+performance) are documented in `docs/windows-memory-test-plan.md` for separate review in light of
+the native observations.
