@@ -126,8 +126,11 @@ jobs:
             printf '%s\n' "$output" | tee -a "$log"
             if (( status )); then
               echo "::error title=windows-memory::$what failed with exit $status"
-              printf '%s\n' "$output" | sed $'s/\x1b\\[[0-9;]*m//g' | tail -40 | \
-                awk '{line=$0; gsub(/%/, "%25", line); gsub(/\r/, "%0D", line); gsub(/\n/, "%0A", line); print "::error title=windows-memory::" line}'
+              # One multi-line annotation (GitHub caps annotations per step, so the whole
+              # tail must travel in a single %0A-encoded message to stay visible).
+              printf '%s\n' "$output" | sed $'s/\x1b\\[[0-9;]*m//g' | tail -60 | \
+                awk '{line=$0; gsub(/%/, "%25", line); gsub(/\r/, "%0D", line); printf "%s%%0A", line}'
+              echo ""
               return "$status"
             fi
             return 0
@@ -155,10 +158,14 @@ jobs:
           echo "CHECKED_OUT_WORKFLOW_COMMIT=$(git rev-parse HEAD)" | tee -a "$log"
           # This one-TU harness includes production runtime_memory.c from the exact source commit
           # and stubs only its two unrelated project-level references. No GPU/runtime libraries.
+          compile_status=0
           run_checked compile clang -std=c11 -O2 -g -Wall -Wextra -Werror -pthread \
             -I"$source_root/src" "$source_root/tests/test_windows_memory.c" -lonecore \
-            -o out/windows-memory-test.exe
-          run_checked execute out/windows-memory-test.exe
+            -o out/windows-memory-test.exe || compile_status=$?
+          execute_status=0
+          if (( compile_status == 0 )); then
+            run_checked execute out/windows-memory-test.exe || execute_status=$?
+          fi
           emit_notice() {
             local topic="$1" pattern="$2" text
             text=$(grep -E "$pattern" "$log" | awk 'BEGIN { ORS = " | " } { print }') || true
@@ -170,14 +177,19 @@ jobs:
             fi
           }
           # Keep evidence in a few compact annotations (GitHub limits per-step annotations).
-          emit_notice 'CRIT-05' '^(RESULT CRIT-05=|COLLISION_BLOCKER=|COLLISION_PROBE |TEST_HOOK_RESERVATION_FAILURE |STOP: reserving|--- CRIT-05)'
+          emit_notice 'CRIT-05' '^(RESULT CRIT-05|NO_COLLISION_PRECHECK |NO_COLLISION_SUMMARY |COLLISION_BLOCKER=|COLLISION_PROBE |TEST_HOOK_RESERVATION_FAILURE |STOP: reserving|Runtime: PS4 address range partially|--- CRIT-05)'
           emit_notice 'CRIT-06 carve' '^(RESULT CRIT-06\.fixture=|PHASE2_RESULT |FIXTURE_(PLACEHOLDER|INITIAL_VIEW|CLEANUP=)|CARVE_(LEFT|MIDDLE|RIGHT|TRACKED_NOACCESS) |--- CRIT-06 section-backed carve)'
           emit_notice 'CRIT-06 gap' '^(RESULT CRIT-06\.gap=|GAP_(LEFT|RIGHT)_DURING_UNMAP |GAP_DIRECTLY_OBSERVED=|--- CRIT-06 direct gap)'
           emit_notice 'CRIT-06 concurrent' '^(RESULT CRIT-06\.concurrent_access=|CONCURRENT_ACCESS_(GATE|ATTEMPT|COMPLETED)=|--- CRIT-06 isolated concurrent access)'
           emit_notice 'CRIT-06 protection' '^(RESULT CRIT-06\.temporary_protection=|TEMP_WRITABLE_PROTECTION=|--- CRIT-06 temporary protection)'
+          emit_notice 'harness-failures' '^(FAIL:|--- CRIT|RESULT CRIT-05)'
           emit_notice 'overall' '^(RESULT SUMMARY|PASS: Windows memory)'
           echo "::notice title=windows-memory::tested_source_commit=$source_commit"
           echo "::notice title=windows-memory::workflow_checkout_commit=$(git rev-parse HEAD)"
+          if (( compile_status || execute_status )); then
+            echo "::error title=windows-memory::harness failed (compile=$compile_status execute=$execute_status)"
+            exit 1
+          fi
 
       - name: Python test suite
         shell: msys2 {0}
