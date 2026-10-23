@@ -342,11 +342,32 @@ void runtime_memory_reserve(void) {
            count,reserved_bytes>>20,(USER_MAX-USER_MIN)>>20);
 }
 static void view_map(const HostRegion *r, DWORD protect) {
-    DWORD initial=protect==PAGE_NOACCESS ? PAGE_READWRITE : protect, old;
-    if (!MapViewOfFile3(section,GetCurrentProcess(),(void *)r->start,r->phys,r->end-r->start,MEM_REPLACE_PLACEHOLDER,initial,NULL,0))
+    /* Map directly at the target protection: a temporary PAGE_READWRITE view (the previous
+     * behaviour for PAGE_NOACCESS targets and for rebuilt siblings) would bypass guest/GPU
+     * page tracking until the saved protections are restored. MapViewOfFile3 accepts
+     * PAGE_NOACCESS for section views, so no writable intermediate is needed. */
+    if (!MapViewOfFile3(section,GetCurrentProcess(),(void *)r->start,r->phys,r->end-r->start,MEM_REPLACE_PLACEHOLDER,protect,NULL,0))
         win_fail("MapViewOfFile3",r->start,r->end-r->start);
-    if (initial!=protect && !VirtualProtect((void *)r->start,r->end-r->start,protect,&old))
-        win_fail("VirtualProtect",r->start,r->end-r->start);
+}
+/* Least-privilege initial protection for a rebuilt view: readable/writable/executable only
+ * where every saved run allows it, so the view is never more permissive than the protections
+ * save_protections() recorded (CRIT-06 hazard B). Runs are restored individually afterwards;
+ * until then the view may be less permissive than saved, never more. */
+static DWORD protect_initial(const ProtRun *runs, size_t n) {
+    if (!n) return PAGE_NOACCESS;
+    int may_read=1, may_write=1, may_exec=1;
+    for (size_t i=0;i<n;++i) {
+        DWORD base=runs[i].protect & 0xFF;
+        may_read &= (base==PAGE_READONLY || base==PAGE_READWRITE || base==PAGE_WRITECOPY ||
+                     base==PAGE_EXECUTE_READ || base==PAGE_EXECUTE_READWRITE || base==PAGE_EXECUTE_WRITECOPY);
+        may_write &= (base==PAGE_READWRITE || base==PAGE_WRITECOPY ||
+                      base==PAGE_EXECUTE_READWRITE || base==PAGE_EXECUTE_WRITECOPY);
+        may_exec &= (base==PAGE_EXECUTE || base==PAGE_EXECUTE_READ ||
+                     base==PAGE_EXECUTE_READWRITE || base==PAGE_EXECUTE_WRITECOPY);
+    }
+    if (may_write) return may_exec ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE;
+    if (may_exec) return may_read ? PAGE_EXECUTE_READ : PAGE_EXECUTE;
+    return may_read ? PAGE_READONLY : PAGE_NOACCESS;
 }
 static size_t save_protections(uintptr_t start, uintptr_t end, ProtRun **runs, size_t count, size_t *capacity) {
     for (uintptr_t at=start; at<end;) {
@@ -398,7 +419,7 @@ static int carve_host(uintptr_t a, uintptr_t b, size_t *at_out) {
         if (keep_left) {
             HostRegion rebuilt=regions[at];
             rebuilt.phys=left.phys; rebuilt.mapped=1;
-            view_map(&rebuilt,PAGE_READWRITE);
+            view_map(&rebuilt,protect_initial(runs,left_runs));
             regions[at]=rebuilt;
         }
         ++at;
@@ -410,7 +431,7 @@ static int carve_host(uintptr_t a, uintptr_t b, size_t *at_out) {
         if (keep_right) {
             HostRegion rebuilt=regions[at+1];
             rebuilt.phys=right.phys+(b-right.start); rebuilt.mapped=1;
-            view_map(&rebuilt,PAGE_READWRITE);
+            view_map(&rebuilt,protect_initial(runs+left_runs,nruns-left_runs));
             regions[at+1]=rebuilt;
         }
     }
@@ -420,7 +441,9 @@ static int carve_host(uintptr_t a, uintptr_t b, size_t *at_out) {
 #endif
     for (size_t i=0;i<nruns;++i) {
         DWORD old;
-        if (runs[i].protect!=PAGE_READWRITE && !VirtualProtect((void *)runs[i].start,runs[i].end-runs[i].start,runs[i].protect,&old))
+        /* Apply every saved run: the rebuilt view starts at the least-privilege common
+         * protection, which may differ from any individual run, including PAGE_READWRITE. */
+        if (!VirtualProtect((void *)runs[i].start,runs[i].end-runs[i].start,runs[i].protect,&old))
             win_fail("restoring page protection",runs[i].start,runs[i].end-runs[i].start);
     }
     (void)left_runs;
