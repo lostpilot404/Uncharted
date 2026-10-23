@@ -1,9 +1,9 @@
 /* PS4 virtual memory: direct (physical) pool, flexible memory, reservations,
  * protection changes and queries. One sparse memfd backs the whole direct
  * pool, so any mapping of any physical range aliases the same storage.
- * Windows: a pagefile-backed section plays the memfd's part, and the PS4 user range is
- * reserved as one placeholder that views of the section replace (VirtualAlloc2/MapViewOfFile3,
- * as shadPS4 does); see the "host mappings" section below.
+ * Windows: a pagefile-backed section plays the memfd's part, and available PS4 user
+ * subranges are reserved as placeholders that views of the section replace
+ * (VirtualAlloc2/MapViewOfFile3, as shadPS4 does); see the "host mappings" section below.
  * Guest addresses are placed below 1 TiB (PS4 user range): GPU descriptors
  * encode 40-bit addresses, so host-default 0x7f... addresses would not fit. */
 #define _GNU_SOURCE
@@ -100,11 +100,13 @@ static int host_prot(int prot) {
 }
 #ifdef _WIN32
 /* ---- host mappings (Windows) ----
- * [USER_MIN,USER_MAX) is covered by regions, each one placeholder or one view of the
- * section. Mapping a range carves it out as a single placeholder first: views overlapping
- * it are unmapped, placeholders coalesced and split, and the parts of views outside the
- * range mapped again with the page protections they had (GPU page tracking included). */
-typedef struct { uintptr_t start, end; uint64_t phys; int mapped; } HostRegion;
+ * Available subranges of [USER_MIN,USER_MAX) are covered by regions, each one placeholder
+ * or one view of the section; host-occupied intervals are omitted so they are never
+ * exposed as guest VMAs or touched by guest operations. Mapping a range carves it out as
+ * a single placeholder within one contiguous reservation: views overlapping it are unmapped,
+ * placeholders coalesced and split, and the parts of views outside the range mapped again
+ * with the page protections they had (GPU page tracking included). */
+typedef struct { uintptr_t start, end, root; uint64_t phys; int mapped; } HostRegion;
 typedef struct { uintptr_t start, end; DWORD protect; } ProtRun;
 static HostRegion *regions; static size_t region_count, region_capacity;
 static HANDLE section;
@@ -128,31 +130,216 @@ static size_t region_index(uintptr_t a) { /* first region with end > a */
     while (lo<hi) { size_t mid=(lo+hi)/2; if (regions[mid].end<=a) lo=mid+1; else hi=mid; }
     return lo;
 }
-static void region_insert(size_t at, HostRegion r) {
-    if (region_count==region_capacity) {
-        size_t capacity=region_capacity ? region_capacity*2 : 256;
-        HostRegion *next=realloc(regions,capacity*sizeof(*regions));
-        if (!next) { fputs("Out of memory (host regions)\n",stderr); exit(1); }
-        regions=next; region_capacity=capacity;
+static int region_reserve(size_t needed) {
+    if (needed<=region_capacity) return 0;
+    size_t capacity=region_capacity ? region_capacity : 256;
+    while (capacity<needed) {
+        if (capacity > SIZE_MAX/(2*sizeof(*regions))) return -1;
+        capacity*=2;
     }
+    HostRegion *next=realloc(regions,capacity*sizeof(*regions));
+    if (!next) return -1;
+    regions=next; region_capacity=capacity;
+    return 0;
+}
+static void region_insert(size_t at, HostRegion r) {
+    if (region_reserve(region_count+1)) { fputs("Out of memory (host regions)\n",stderr); exit(1); }
     memmove(regions+at+1,regions+at,(region_count-at)*sizeof(*regions));
     regions[at]=r; ++region_count;
 }
 static void region_erase(size_t at, size_t n) {
     memmove(regions+at,regions+at+n,(region_count-at-n)*sizeof(*regions)); region_count-=n;
 }
-/* The guest range is reserved before anything else can be placed there (runtime_start). */
+/* Contiguous host-reserved run [first,last) from one root reservation covering [a,b). */
+static int host_range_span(uintptr_t a, uintptr_t b, size_t *first_out, size_t *last_out) {
+    if (a>=b) return 0;
+    size_t first=region_index(a);
+    if (first==region_count || regions[first].start>a) return 0;
+    uintptr_t root=regions[first].root;
+    size_t last=first+1;
+    while (regions[last-1].end<b) {
+        if (last==region_count || regions[last].start!=regions[last-1].end || regions[last].root!=root)
+            return 0;
+        ++last;
+    }
+    if (first_out) *first_out=first;
+    if (last_out) *last_out=last;
+    return 1;
+}
+/* First maximal contiguous host-reserved span with end > at; 0 when none remains. */
+static int host_next_span(uintptr_t at, uintptr_t *span_start, uintptr_t *span_end) {
+    size_t i=region_index(at);
+    if (i==region_count) return 0;
+    uintptr_t start=regions[i].start, end=regions[i].end, root=regions[i].root;
+    while (i+1<region_count && regions[i+1].start==end && regions[i+1].root==root) {
+        ++i;
+        end=regions[i].end;
+    }
+    *span_start=start;
+    *span_end=end;
+    return 1;
+}
+/* Unmaps views, coalesces split placeholders within each root reservation, and releases
+ * only runtime-owned reservations; host-occupied gaps between them are never touched. */
+static int release_host_regions(void) {
+    int ok=1;
+    for (size_t g=0; g<region_count;) {
+        uintptr_t root=regions[g].root;
+        size_t end_g=g+1;
+        while (end_g<region_count && regions[end_g].start==regions[end_g-1].end &&
+               regions[end_g].root==root)
+            ++end_g;
+        int group_ok=1;
+        for (size_t i=g; i<end_g; ++i) {
+            if (!regions[i].mapped) continue;
+            if (!UnmapViewOfFile2(GetCurrentProcess(),(void *)regions[i].start,MEM_PRESERVE_PLACEHOLDER))
+                ok=group_ok=0;
+            else
+                regions[i].mapped=0;
+        }
+        if (group_ok && end_g-g>1) {
+            uintptr_t lo=regions[g].start, hi=regions[end_g-1].end;
+            if (!VirtualFree((void *)lo,hi-lo,MEM_RELEASE|MEM_COALESCE_PLACEHOLDERS)) {
+                ok=group_ok=0;
+            } else {
+                regions[g].end=hi;
+                region_erase(g+1,end_g-g-1);
+                end_g=g+1;
+            }
+        }
+        if (group_ok && VirtualFree((void *)regions[g].start,0,MEM_RELEASE)) {
+            region_erase(g,1);
+        } else {
+            ok=0;
+            g=end_g;
+        }
+    }
+    if (!region_count) { free(regions); regions=NULL; region_capacity=0; }
+    return ok ? 0 : -1;
+}
+static uint64_t host_granularity(void) {
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    uint64_t gran=si.dwAllocationGranularity ? (uint64_t)si.dwAllocationGranularity : UINT64_C(65536);
+    if (gran<PAGE) gran=PAGE;
+    return align_up(gran,PAGE);
+}
+/* Available subranges of [USER_MIN,USER_MAX) are reserved before host allocations can claim them. */
 void runtime_memory_reserve(void) {
-    if (region_count) return;
-    if (!VirtualAlloc2(NULL,(void *)USER_MIN,USER_MAX-USER_MIN,MEM_RESERVE|MEM_RESERVE_PLACEHOLDER,PAGE_NOACCESS,NULL,0)) {
+    write_lock();
+    if (region_count) { write_unlock(); return; }
+    if (region_reserve(1)) {
+        write_unlock();
+        fputs("Out of memory (host regions)\n",stderr);
+        exit(1);
+    }
+    void *full=VirtualAlloc2(NULL,(void *)USER_MIN,USER_MAX-USER_MIN,
+                             MEM_RESERVE|MEM_RESERVE_PLACEHOLDER,PAGE_NOACCESS,NULL,0);
+    if (full==(void *)USER_MIN) {
+        region_insert(0,(HostRegion){USER_MIN,USER_MAX,USER_MIN,0,0});
+        write_unlock();
+        return;
+    }
+    DWORD first_error=full ? ERROR_INVALID_ADDRESS : GetLastError();
+    if (full) VirtualFree(full,0,MEM_RELEASE);
+    if (first_error!=ERROR_INVALID_ADDRESS) {
 #ifdef BB_WINDOWS_MEMORY_TEST
-        DWORD error=GetLastError();
-        runtime_memory_test_reservation_failure(error,region_count);
-        SetLastError(error);
+        runtime_memory_test_reservation_failure(first_error,region_count);
 #endif
+        write_unlock();
+        SetLastError(first_error);
         win_fail("reserving the PS4 address range (link with --disable-high-entropy-va)",USER_MIN,USER_MAX-USER_MIN);
     }
-    region_insert(0,(HostRegion){USER_MIN,USER_MAX,0,0});
+    uint64_t gran=host_granularity();
+    uint64_t reserved_bytes=0;
+    uintptr_t cursor=USER_MIN;
+    unsigned race_retries=0;
+    while (cursor<USER_MAX) {
+        MEMORY_BASIC_INFORMATION mbi;
+        if (!VirtualQuery((const void *)cursor,&mbi,sizeof(mbi)) || !mbi.RegionSize ||
+            (uintptr_t)mbi.BaseAddress>cursor) {
+            DWORD err=GetLastError();
+            if (!err) err=ERROR_INVALID_DATA;
+            release_host_regions();
+#ifdef BB_WINDOWS_MEMORY_TEST
+            runtime_memory_test_reservation_failure(err,region_count);
+#endif
+            write_unlock();
+            SetLastError(err);
+            win_fail("querying the PS4 address range",cursor,USER_MAX-cursor);
+        }
+        uintptr_t mbi_base=(uintptr_t)mbi.BaseAddress;
+        uintptr_t scan_end=(mbi.RegionSize>USER_MAX-mbi_base) ? USER_MAX : mbi_base+mbi.RegionSize;
+        if (scan_end<=cursor) {
+            release_host_regions();
+#ifdef BB_WINDOWS_MEMORY_TEST
+            runtime_memory_test_reservation_failure(ERROR_INVALID_DATA,region_count);
+#endif
+            write_unlock();
+            SetLastError(ERROR_INVALID_DATA);
+            win_fail("advancing across the PS4 address range",cursor,USER_MAX-cursor);
+        }
+        if (mbi.State!=MEM_FREE) {
+            cursor=scan_end;
+            race_retries=0;
+            continue;
+        }
+        uintptr_t sub_start=align_up(cursor,gran);
+        uintptr_t sub_end=scan_end & ~(uintptr_t)(gran-1);
+        if (sub_start<cursor || sub_start>=sub_end) {
+            cursor=scan_end;
+            race_retries=0;
+            continue;
+        }
+        if (region_reserve(region_count+1)) {
+            release_host_regions();
+            write_unlock();
+            fputs("Out of memory (host regions)\n",stderr);
+            exit(1);
+        }
+        void *got=VirtualAlloc2(NULL,(void *)sub_start,sub_end-sub_start,
+                                MEM_RESERVE|MEM_RESERVE_PLACEHOLDER,PAGE_NOACCESS,NULL,0);
+        if (got!=(void *)sub_start) {
+            DWORD err=got ? ERROR_INVALID_ADDRESS : GetLastError();
+            if (got) VirtualFree(got,0,MEM_RELEASE);
+            if (err==ERROR_INVALID_ADDRESS && race_retries<8) {
+                MEMORY_BASIC_INFORMATION verify;
+                if (VirtualQuery((const void *)sub_start,&verify,sizeof(verify)) &&
+                    (uintptr_t)verify.BaseAddress<=sub_start) {
+                    uintptr_t vbase=(uintptr_t)verify.BaseAddress;
+                    uintptr_t vend=(verify.RegionSize>USER_MAX-vbase) ? USER_MAX : vbase+verify.RegionSize;
+                    if (verify.State!=MEM_FREE || vend<sub_end) {
+                        ++race_retries;
+                        cursor=sub_start;
+                        continue;
+                    }
+                }
+            }
+            release_host_regions();
+#ifdef BB_WINDOWS_MEMORY_TEST
+            runtime_memory_test_reservation_failure(err,region_count);
+#endif
+            write_unlock();
+            SetLastError(err);
+            win_fail("reserving free PS4 address subrange",sub_start,sub_end-sub_start);
+        }
+        region_insert(region_count,(HostRegion){sub_start,sub_end,sub_start,0,0});
+        reserved_bytes+=sub_end-sub_start;
+        cursor=scan_end;
+        race_retries=0;
+    }
+    if (!region_count) {
+#ifdef BB_WINDOWS_MEMORY_TEST
+        runtime_memory_test_reservation_failure(ERROR_INVALID_ADDRESS,region_count);
+#endif
+        write_unlock();
+        SetLastError(ERROR_INVALID_ADDRESS);
+        win_fail("reserving the PS4 address range (no free guest subrange)",USER_MIN,USER_MAX-USER_MIN);
+    }
+    size_t count=region_count;
+    write_unlock();
+    printf("Runtime: PS4 address range partially occupied; reserved %zu subrange(s), %" PRIu64 " MiB of %" PRIu64 " MiB available\n",
+           count,reserved_bytes>>20,(USER_MAX-USER_MIN)>>20);
 }
 static void view_map(const HostRegion *r, DWORD protect) {
     DWORD initial=protect==PAGE_NOACCESS ? PAGE_READWRITE : protect, old;
@@ -167,22 +354,27 @@ static size_t save_protections(uintptr_t start, uintptr_t end, ProtRun **runs, s
         if (!VirtualQuery((void *)at,&m,sizeof(m))) win_fail("VirtualQuery",at,0);
         uintptr_t next=(uintptr_t)m.BaseAddress+m.RegionSize;
         if (next>end) next=end;
-        if (count==*capacity) { *capacity=*capacity ? *capacity*2 : 16; *runs=realloc(*runs,*capacity*sizeof(**runs)); }
+        if (count==*capacity) {
+            size_t next_cap=*capacity ? *capacity*2 : 16;
+            ProtRun *grown=realloc(*runs,next_cap*sizeof(**runs));
+            if (!grown) { free(*runs); fputs("Out of memory (prot runs)\n",stderr); exit(1); }
+            *runs=grown; *capacity=next_cap;
+        }
         (*runs)[count++]=(ProtRun){at,next,m.Protect};
         at=next;
     }
     return count;
 }
-/* Leaves [a,b) as exactly one unmapped placeholder; returns its region index. */
-static size_t carve_host(uintptr_t a, uintptr_t b) {
-    size_t first=region_index(a), last=first;
-    if (first==region_count || regions[first].start>a) win_fail("guest range outside the reservation",a,b-a);
-    while (last<region_count && regions[last].start<b) ++last;
-    if (regions[last-1].end<b) win_fail("guest range outside the reservation",a,b-a);
-    uintptr_t lo=regions[first].start, hi=regions[last-1].end;
+/* Leaves [a,b) as exactly one unmapped placeholder within one reserved span;
+ * returns 0 and stores its region index in *at_out, or -1 if [a,b) is not fully reserved. */
+static int carve_host(uintptr_t a, uintptr_t b, size_t *at_out) {
+    size_t first, last;
+    if (!host_range_span(a,b,&first,&last)) return -1;
+    uintptr_t lo=regions[first].start, hi=regions[last-1].end, root=regions[first].root;
     HostRegion left=regions[first], right=regions[last-1];
     int keep_left=left.mapped && lo<a, keep_right=right.mapped && b<hi;
-    if (first==last-1 && !left.mapped && lo==a && hi==b) return first;
+    if (first==last-1 && !left.mapped && lo==a && hi==b) { *at_out=first; return 0; }
+    if (region_reserve(region_count+2)) { fputs("Out of memory (host regions)\n",stderr); exit(1); }
     ProtRun *runs=NULL; size_t nruns=0, capacity=0, left_runs=0;
     if (keep_left) left_runs=nruns=save_protections(lo,a,&runs,nruns,&capacity);
     if (keep_right) nruns=save_protections(b,hi,&runs,nruns,&capacity);
@@ -197,25 +389,29 @@ static size_t carve_host(uintptr_t a, uintptr_t b) {
     if (last-first>1 && !VirtualFree((void *)lo,hi-lo,MEM_RELEASE|MEM_COALESCE_PLACEHOLDERS))
         win_fail("coalescing placeholders",lo,hi-lo);
     region_erase(first,last-first);
-    region_insert(first,(HostRegion){lo,hi,0,0});
+    region_insert(first,(HostRegion){lo,hi,root,0,0});
     size_t at=first;
     if (lo<a) {
         if (!VirtualFree((void *)lo,a-lo,MEM_RELEASE|MEM_PRESERVE_PLACEHOLDER)) win_fail("splitting a placeholder",lo,a-lo);
         regions[at].end=a;
-        region_insert(at+1,(HostRegion){a,hi,0,0});
+        region_insert(at+1,(HostRegion){a,hi,root,0,0});
         if (keep_left) {
-            regions[at].phys=left.phys; regions[at].mapped=1;
-            view_map(&regions[at],PAGE_READWRITE);
+            HostRegion rebuilt=regions[at];
+            rebuilt.phys=left.phys; rebuilt.mapped=1;
+            view_map(&rebuilt,PAGE_READWRITE);
+            regions[at]=rebuilt;
         }
         ++at;
     }
     if (b<hi) {
         if (!VirtualFree((void *)a,b-a,MEM_RELEASE|MEM_PRESERVE_PLACEHOLDER)) win_fail("splitting a placeholder",a,b-a);
         regions[at].end=b;
-        region_insert(at+1,(HostRegion){b,hi,0,0});
+        region_insert(at+1,(HostRegion){b,hi,root,0,0});
         if (keep_right) {
-            regions[at+1].phys=right.phys+(b-right.start); regions[at+1].mapped=1;
-            view_map(&regions[at+1],PAGE_READWRITE);
+            HostRegion rebuilt=regions[at+1];
+            rebuilt.phys=right.phys+(b-right.start); rebuilt.mapped=1;
+            view_map(&rebuilt,PAGE_READWRITE);
+            regions[at+1]=rebuilt;
         }
     }
 #ifdef BB_WINDOWS_MEMORY_TEST
@@ -229,17 +425,28 @@ static size_t carve_host(uintptr_t a, uintptr_t b) {
     }
     (void)left_runs;
     free(runs);
-    return at;
-}
-static int host_map(uintptr_t address, uint64_t size, int prot, int reserved, uint64_t phys) {
-    size_t i=carve_host(address,address+size);
-    if (reserved) return 0;
-    regions[i].phys=phys; regions[i].mapped=1;
-    view_map(&regions[i],win_prot(prot));
+    *at_out=at;
     return 0;
 }
-static int host_unmap(uintptr_t address, uint64_t size) { carve_host(address,address+size); return 0; }
+static int host_map(uintptr_t address, uint64_t size, int prot, int reserved, uint64_t phys) {
+    if (!size || address>UINTPTR_MAX-size) return -1;
+    size_t i;
+    if (carve_host(address,address+size,&i)) return -1;
+    if (reserved) return 0;
+    HostRegion mapped=regions[i];
+    mapped.phys=phys; mapped.mapped=1;
+    view_map(&mapped,win_prot(prot));
+    regions[i]=mapped;
+    return 0;
+}
+static int host_unmap(uintptr_t address, uint64_t size) {
+    if (!size || address>UINTPTR_MAX-size) return -1;
+    size_t i;
+    return carve_host(address,address+size,&i);
+}
 static int host_protect(uintptr_t address, uint64_t size, int prot) {
+    if (!size) return 0;
+    if (address>UINTPTR_MAX-size) return -1;
     DWORD protect=win_prot(prot), old;
     uintptr_t end=address+size;
     for (size_t i=region_index(address); i<region_count && regions[i].start<end; ++i) {
@@ -259,7 +466,8 @@ static int pool(void) {
     section=CreateFileMapping2(INVALID_HANDLE_VALUE,NULL,FILE_MAP_ALL_ACCESS,PAGE_EXECUTE_READWRITE,SEC_COMMIT,bytes,NULL,NULL,0);
     if (!section) { fprintf(stderr,"Runtime: cannot create %" PRIu64 " MiB of guest memory (error %lu); is the page file large enough?\n",bytes>>20,GetLastError()); return -1; }
     backing_base=MapViewOfFile3(section,GetCurrentProcess(),NULL,0,bytes,0,PAGE_READWRITE,NULL,0);
-    return backing_base ? 0 : -1;
+    if (!backing_base) { CloseHandle(section); section=NULL; return -1; }
+    return 0;
 }
 #else
 /* Direct memory occupies [0,POOL_SIZE) of the memfd, flexible memory [POOL_SIZE,+FLEX_SPAN). */
@@ -332,13 +540,20 @@ static size_t vma_index(uintptr_t a) { /* first VMA with end > a */
     while (lo<hi) { size_t mid=(lo+hi)/2; if (vmas[mid].end<=a) lo=mid+1; else hi=mid; }
     return lo;
 }
-static int vma_insert(size_t at, Vma v) {
-    if (vma_count==vma_capacity) {
-        size_t capacity=vma_capacity ? vma_capacity*2 : 256;
-        Vma *next=realloc(vmas,capacity*sizeof(*vmas));
-        if (!next) return -1;
-        vmas=next; vma_capacity=capacity;
+static int vma_reserve(size_t needed) {
+    if (needed<=vma_capacity) return 0;
+    size_t capacity=vma_capacity ? vma_capacity : 256;
+    while (capacity<needed) {
+        if (capacity > SIZE_MAX/(2*sizeof(*vmas))) return -1;
+        capacity*=2;
     }
+    Vma *next=realloc(vmas,capacity*sizeof(*vmas));
+    if (!next) return -1;
+    vmas=next; vma_capacity=capacity;
+    return 0;
+}
+static int vma_insert(size_t at, Vma v) {
+    if (vma_reserve(vma_count+1)) return -1;
     memmove(vmas+at+1,vmas+at,(vma_count-at)*sizeof(*vmas));
     vmas[at]=v; ++vma_count; return 0;
 }
@@ -374,12 +589,36 @@ static int overlaps(uintptr_t start, uintptr_t end, int ignore_reserved) {
 }
 /* First-fit search in the PS4 user range, starting from the hint. */
 static uintptr_t find_free(uintptr_t hint, uint64_t size, uint64_t alignment) {
-    uintptr_t at=align_up(hint<USER_MIN ? USER_MIN : hint, alignment);
-    for (size_t i=vma_index(at); at+size<=USER_MAX; ++i) {
-        if (i==vma_count || vmas[i].start>=at+size) return at;
-        at=align_up(vmas[i].end,alignment);
+    if (!size || size>USER_MAX-USER_MIN) return 0;
+    uintptr_t min_at=hint<USER_MIN ? USER_MIN : hint;
+    if (min_at>USER_MAX-size) return 0;
+    uintptr_t at=align_up(min_at,alignment);
+    if (at<min_at || at>USER_MAX-size) return 0;
+    for (;;) {
+#ifdef _WIN32
+        uintptr_t span_start, span_end;
+        if (!host_next_span(at,&span_start,&span_end)) return 0;
+        if (at<span_start) {
+            uintptr_t next=align_up(span_start,alignment);
+            if (next<span_start || next>USER_MAX-size) return 0;
+            at=next;
+            continue;
+        }
+        if (span_end-at<size) {
+            if (span_end>USER_MAX-size) return 0;
+            uintptr_t next=align_up(span_end,alignment);
+            if (next<span_end || next>USER_MAX-size) return 0;
+            at=next;
+            continue;
+        }
+#endif
+        size_t i=vma_index(at);
+        if (i==vma_count || (vmas[i].start>=at && vmas[i].start-at>=size)) return at;
+        if (vmas[i].end>USER_MAX-size) return 0;
+        uintptr_t next=align_up(vmas[i].end,alignment);
+        if (next<vmas[i].end || next>USER_MAX-size) return 0;
+        at=next;
     }
-    return 0;
 }
 static void drop_range(uintptr_t start, uintptr_t end) {
     int error; size_t i=carve(start,end,&error), n=0;
@@ -398,11 +637,13 @@ static int32_t place(void **inout, uint64_t size, int prot, int flags, uint64_t 
     uintptr_t address=(uintptr_t)*inout;
     if (flags & MAP_FIXED_FLAG) {
         if (!address || address%PAGE) return INVALID;
+        if (size>USER_MAX-USER_MIN || address<USER_MIN || address>USER_MAX-size) return NO_MEMORY;
         if ((flags & MAP_NO_OVERWRITE) && overlaps(address,address+size,1)) return NO_MEMORY;
     } else {
         address=find_free(address,size,alignment);
         if (!address) return NO_MEMORY;
     }
+    if (vma_reserve(vma_count+3)) return NO_MEMORY;
     if (host_map(address,size,host_prot(prot),kind==KIND_RESERVED,phys)) return NO_MEMORY;
     void *mapped=(void *)address;
     drop_range(address,address+size);
@@ -490,8 +731,11 @@ static ABI int32_t direct_map_named(void **out, uint64_t size, int prot, int fla
     (void)name; return direct_map(out,size,prot,flags,physical,alignment);
 }
 static int32_t unmap_locked(uintptr_t start, uint64_t size) {
-    if (start%PAGE || !size) return INVALID;
-    uint64_t end=start+align_up(size,PAGE);
+    if (start%PAGE || !size || size>UINT64_MAX-(PAGE-1)) return INVALID;
+    uint64_t aligned=align_up(size,PAGE);
+    if (start>UINTPTR_MAX-aligned) return INVALID;
+    uintptr_t end=start+aligned;
+    if (vma_reserve(vma_count+2)) return NO_MEMORY;
     for (size_t i=vma_index(start); i<vma_count && vmas[i].start<end; ++i)
         if (vmas[i].kind!=KIND_RESERVED) {
             uintptr_t a=vmas[i].start>start ? vmas[i].start : start, b=vmas[i].end<end ? vmas[i].end : end;
@@ -506,7 +750,10 @@ static int32_t unmap_locked(uintptr_t start, uint64_t size) {
 }
 static ABI int32_t direct_unmap(void *address, uint64_t size) {
     /* The GPU forgets the range before it disappears (as shadPS4's early GPU unmap). */
-    if (hook_unmap && !((uintptr_t)address%PAGE) && size) hook_unmap((uintptr_t)address,align_up(size,PAGE));
+    if (hook_unmap && !((uintptr_t)address%PAGE) && size && size<=UINT64_MAX-(PAGE-1)) {
+        uint64_t aligned=align_up(size,PAGE);
+        if ((uintptr_t)address<=UINTPTR_MAX-aligned) hook_unmap((uintptr_t)address,aligned);
+    }
     write_lock();
     size_t before=pending_count;
     int32_t result=unmap_locked((uintptr_t)address,size);
@@ -577,8 +824,13 @@ static ABI int32_t reserve_range(void **inout, uint64_t size, int flags, uint64_
     if (!alignment) alignment=PAGE;
     if (!inout || !size || size%PAGE || !valid_alignment(alignment)) return INVALID;
     write_lock();
-    if ((flags & MAP_FIXED_FLAG) && overlaps((uintptr_t)*inout,(uintptr_t)*inout+size,0)) {
-        write_unlock(); return NO_MEMORY;
+    runtime_memory_reserve();
+    if (flags & MAP_FIXED_FLAG) {
+        uintptr_t want=(uintptr_t)*inout;
+        if (!want || want%PAGE) { write_unlock(); return INVALID; }
+        if (size>USER_MAX-USER_MIN || want<USER_MIN || want>USER_MAX-size || overlaps(want,want+size,0)) {
+            write_unlock(); return NO_MEMORY;
+        }
     }
     if (memory_log()) printf("Memory: reserve want=%p size=0x%" PRIx64 " flags=0x%x align=0x%" PRIx64 "\n",*inout,size,flags,alignment);
     int32_t result=place(inout,size,0,flags,alignment,KIND_RESERVED,0,0);
@@ -587,14 +839,20 @@ static ABI int32_t reserve_range(void **inout, uint64_t size, int flags, uint64_
     return result;
 }
 static int32_t protect_locked(uintptr_t start, uint64_t size, int prot, int type) {
-    uintptr_t end=start+align_up(size,PAGE);
-    start&=~(uintptr_t)(PAGE-1);
-    if ((prot & ~0x37) || !covered(start,end,0)) return INVALID;
-    if (host_protect(start,end-start,host_prot(prot))) return INVALID;
-    int error; size_t i=carve(start,end,&error);
+    if (!size || size>UINT64_MAX-(PAGE-1)) return INVALID;
+    uintptr_t base=start & ~(uintptr_t)(PAGE-1);
+    uint64_t span=(start-base)+size;
+    if (span>UINT64_MAX-(PAGE-1)) return INVALID;
+    uint64_t aligned=align_up(span,PAGE);
+    if (base>UINTPTR_MAX-aligned) return INVALID;
+    uintptr_t end=base+aligned;
+    if ((prot & ~0x37) || !covered(base,end,0)) return INVALID;
+    if (vma_reserve(vma_count+2)) return NO_MEMORY;
+    if (host_protect(base,end-base,host_prot(prot))) return INVALID;
+    int error; size_t i=carve(base,end,&error);
     if (error) return NO_MEMORY;
     for (; i<vma_count && vmas[i].start<end; ++i) { vmas[i].prot=prot; if (type>=0) vmas[i].type=type; }
-    queue_hook(HOOK_INVALIDATE,start,end-start);
+    queue_hook(HOOK_INVALIDATE,base,end-base);
     ++protects;
     return 0;
 }
@@ -793,17 +1051,19 @@ void runtime_memory_set_gpu_hooks(GpuRange map, GpuRange unmap, GpuRange invalid
 }
 /* Writes through the backing view; 0 when part of the range has no backing. */
 int runtime_memory_write_backing(uintptr_t address, const void *data, uint64_t size) {
+    if (!size) return 1;
+    if (size>UINTPTR_MAX-address) return 0;
     read_lock();
-    int ok=1;
-    for (uintptr_t at=address, end=address+size; at<end && ok;) {
+    uintptr_t end=address+size;
+    if (!covered(address,end,0)) { read_unlock(); return 0; }
+    for (uintptr_t at=address; at<end;) {
         size_t i=vma_index(at);
-        if (i==vma_count || vmas[i].start>at || vmas[i].kind==KIND_RESERVED) { ok=0; break; }
         uint64_t n=(vmas[i].end<end ? vmas[i].end : end)-at;
         memcpy(backing_base+vmas[i].phys+(at-vmas[i].start),(const unsigned char *)data+(at-address),n);
         at+=n;
     }
     read_unlock();
-    return ok;
+    return 1;
 }
 /* Per-thread cache of recently found regions for the GPU's per-draw queries:
  * entries hold for as long as the table generation they were read at. */
@@ -857,11 +1117,13 @@ int runtime_memory_region(uintptr_t address, uintptr_t *start, uintptr_t *end, i
 }
 /* GPU page tracking: restrict host access, never beyond the guest's own protection. */
 void runtime_memory_gpu_protect(uintptr_t address, uint64_t size, int read, int write) {
+    if (!size) return;
+    uintptr_t end=size>UINTPTR_MAX-address ? UINTPTR_MAX : address+size;
     read_lock();
-    for (size_t i=vma_index(address); i<vma_count && vmas[i].start<address+size; ++i) {
+    for (size_t i=vma_index(address); i<vma_count && vmas[i].start<end; ++i) {
         if (vmas[i].kind==KIND_RESERVED) continue;
         uintptr_t a=vmas[i].start>address ? vmas[i].start : address;
-        uintptr_t b=vmas[i].end<address+size ? vmas[i].end : address+size;
+        uintptr_t b=vmas[i].end<end ? vmas[i].end : end;
         int guest=host_prot(vmas[i].prot);
         int want=(read ? PROT_READ : 0)|(write ? PROT_WRITE|PROT_READ : 0)|(guest & PROT_EXEC);
         host_protect(a,b-a,guest & want);
@@ -870,6 +1132,7 @@ void runtime_memory_gpu_protect(uintptr_t address, uint64_t size, int read, int 
 }
 /* Host view of a guest range, for the GPU backend: the range must be mapped. */
 int runtime_memory_is_mapped(uintptr_t address, uint64_t size) {
+    if (size>UINTPTR_MAX-address) return 0;
     const CachedRegion *c=(runtime_disabled_optimizations & 1) ? NULL : cached_region(address);
     if (c && c->kind!=KIND_RESERVED && size<=c->end-address) return 1;
     read_lock();

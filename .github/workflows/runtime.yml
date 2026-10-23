@@ -170,7 +170,7 @@ jobs:
             fi
           }
           # Keep evidence in a few compact annotations (GitHub limits per-step annotations).
-          emit_notice 'CRIT-05' '^(RESULT CRIT-05=|COLLISION_BLOCKER=|COLLISION_PROBE |TEST_HOOK_RESERVATION_FAILURE |STOP: reserving|--- CRIT-05)'
+          emit_notice 'CRIT-05' '^(RESULT CRIT-05|NO_COLLISION_PRECHECK |NO_COLLISION_SUMMARY |COLLISION_BLOCKER=|COLLISION_PROBE |TEST_HOOK_RESERVATION_FAILURE |STOP: reserving|Runtime: PS4 address range partially|--- CRIT-05)'
           emit_notice 'CRIT-06 carve' '^(RESULT CRIT-06\.fixture=|PHASE2_RESULT |FIXTURE_(PLACEHOLDER|INITIAL_VIEW|CLEANUP=)|CARVE_(LEFT|MIDDLE|RIGHT|TRACKED_NOACCESS) |--- CRIT-06 section-backed carve)'
           emit_notice 'CRIT-06 gap' '^(RESULT CRIT-06\.gap=|GAP_(LEFT|RIGHT)_DURING_UNMAP |GAP_DIRECTLY_OBSERVED=|--- CRIT-06 direct gap)'
           emit_notice 'CRIT-06 concurrent' '^(RESULT CRIT-06\.concurrent_access=|CONCURRENT_ACCESS_(GATE|ATTEMPT|COMPLETED)=|--- CRIT-06 isolated concurrent access)'

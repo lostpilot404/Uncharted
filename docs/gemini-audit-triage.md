@@ -1052,3 +1052,49 @@ would be false and potentially destructive. Candidate CRIT-05/CRIT-06 designs an
 section offsets/aliasing, GPU page tracking, raw guest-thread access, API failure handling and
 performance) are documented in `docs/windows-memory-test-plan.md` for separate review in light of
 the native observations.
+
+---
+
+## 14. Mission 7.3 — CRIT-05 fix
+
+This section supersedes the §3.3/§11.1/§13 disposition of CRIT-05 as merely deferred. CRIT-06
+remains open and is not claimed fixed.
+
+Base verified by fresh fetch: `origin/main` == local `HEAD` == session branch start ==
+`d49e0c6cf289099d433ba552dc5961fec05bd8d7` (merge of PR #7), with that commit verified as an
+ancestor of `origin/main`. All PR #7 files and the `BB_WINDOWS_MEMORY_TEST` hooks were present.
+
+Root cause (confirmed against source): Windows `runtime_memory_reserve()` made exactly one
+944 GiB `VirtualAlloc2(MEM_RESERVE|MEM_RESERVE_PLACEHOLDER)` over `[0x1000000000, 0xfc00000000)`
+and exited 21 on any failure. Any host allocation inside that interval — measured in PR #7
+with a deliberate 64 KiB blocker returning `ERROR_INVALID_ADDRESS` (487) — prevented startup.
+Nothing in the runtime requires one contiguous OS reservation: the guest contract is the VMA
+table (`find_free`/`covered`/`overlaps`, all `[USER_MIN, USER_MAX)`-bounded), and
+`carve_host()` operates on one contiguous placeholder span per request.
+
+Fix (production: `src/runtime_memory.c`, comment in `src/runtime.h`): reserve available
+subranges, keeping host-owned holes distinct from guest VMAs. The full-span fast path is
+unchanged. On 487, a `VirtualQuery()` walk reserves each 64 KiB-aligned free subrange at its
+exact guest address and records only successful reservations (new `HostRegion.root` keeps
+cleanup/coalescing inside one originating reservation). Non-487 errors, query failures,
+mid-scan races that cannot be reconciled, and the zero-subrange case roll back every partial
+reservation and exit 21 explicitly. Hole-crossing guest map/unmap requests now return
+`NO_MEMORY`/`INVALID` instead of reaching `win_fail()`; mapped metadata is published only
+after `MapViewOfFile3()` succeeds; `find_free()` skips holes; fixed `sceKernelReserveVirtualRange`
+before any pool use ensures the reservation instead of hitting the fatal carve path. The
+rejected Gemini §3.4 approach (recording occupied ranges as guest-reserved VMAs) remains
+rejected and is not implemented.
+
+Tests: `tests/test_windows_memory.c` now has six native CRIT-05 children — no-collision,
+low blocker at `USER_MIN` (PR #7 scenario, now expecting recovery), unaligned 84 KiB middle
+blocker with boundary/rollback semantics, high blocker at `USER_MAX - 64 KiB`, three
+non-contiguous blockers with pocket/`batch_map2` behavior, and full-interval exhaustion
+(still exit 21, `region_count=0`). CRIT-06 fixture/gap/concurrent/protection children are
+preserved as characterization. Results are recorded in
+`docs/windows-memory-test-plan.md` §"Mission 7.3" once the exact-head Windows CI run is
+inspected; Linux-only results are not evidence for the `_WIN32` path.
+
+Remaining: CRIT-06 (transient missing-view interval, concurrent access violation, temporary
+writable protections during `carve_host()`) is unresolved and needs its own safepoint/carve
+design. Degraded-capacity limitation: a guest mapping larger than every available subrange
+fails with `NO_MEMORY` even when aggregate free space suffices.

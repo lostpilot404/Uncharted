@@ -12,15 +12,19 @@ this plan and `docs/gemini-audit-triage.md` record the available evidence.
 
 ## Verified implementation facts
 
-Verified directly in `src/runtime_memory.c` at the baseline above:
+Verified directly in `src/runtime_memory.c` at the PR #7 baseline above (pre-fix):
 
 - `USER_MIN` is `0x1000000000`; `USER_MAX` is `0xfc00000000`; the half-open interval is
   944 GiB.
-- Windows `runtime_memory_reserve()` makes one `VirtualAlloc2()` request for that exact interval
+- Windows `runtime_memory_reserve()` made one `VirtualAlloc2()` request for that exact interval
   with `MEM_RESERVE | MEM_RESERVE_PLACEHOLDER` and `PAGE_NOACCESS`.
-- On failure, `win_fail()` prints `GetLastError()` and exits with status 21. The initial
-  `HostRegion` is inserted only after the operating-system reservation succeeds.
-- The initial Windows region table entry represents the entire reserved interval.
+- On failure, `win_fail()` printed `GetLastError()` and exited with status 21. The initial
+  `HostRegion` was inserted only after the operating-system reservation succeeded.
+- The initial Windows region table entry represented the entire reserved interval.
+
+Mission 7.3 changes only the reservation/span layer (see "CRIT-05 fix (Mission 7.3)" below):
+the full-span request is still attempted first; on `ERROR_INVALID_ADDRESS` the free
+subranges are reserved individually and host-occupied intervals are omitted from the table.
 - `carve_host()` saves protections, unmaps mapped views using `UnmapViewOfFile2(...,
   MEM_PRESERVE_PLACEHOLDER)`, coalesces/splits placeholders, rebuilds surviving section views,
   then restores saved protection runs.
@@ -64,34 +68,49 @@ absent from ordinary runtime builds. The fixture seeds `regions` only after its 
 `VirtualAlloc2()` placeholder reservation succeeds. It does not call
 `runtime_memory_reserve()` for the fixture and does not reserve or commit 944 GiB.
 
-## Phase 1 — deliberate reservation collision
+## Phase 1 — deliberate reservation collision (updated by Mission 7.3)
 
-The parent launches `--child-reservation-collision` using `CreateProcessA`, merges and captures
-its stdout/stderr, waits for the child, and records the exit status. The child:
+PR #7 characterization (superseded as the expected production outcome): a 64 KiB blocker at
+`USER_MIN` made the monolithic 944 GiB `VirtualAlloc2()` fail with 487, production
+`runtime_memory_reserve()` exited 21 via `win_fail()`, and the region table stayed empty.
 
-1. Confirms the fixed, allocation-granularity-aligned production base `USER_MIN` is initially
-   free. If it is not, that is a setup failure—not evidence of a collision.
-2. Reserves one 64 KiB `MEM_RESERVE_PLACEHOLDER` at exactly `USER_MIN` with `VirtualAlloc2()`.
-   This creates a deliberate overlap; the test does not rely on a system DLL collision.
-3. Probes the exact production 944 GiB `VirtualAlloc2()` request and requires
-   `ERROR_INVALID_ADDRESS` (487). Any other Windows error is classified as an unrelated error
-   and fails the characterization.
-4. Calls production `runtime_memory_reserve()`. Its test-only failure callback records the error
-   and `region_count` before `win_fail()` exits the child. The parent requires the production
-   error to remain 487, the table count to remain zero, and the child exit status to be 21.
+Mission 7.3 expected behavior: the same blocker must now be **recovered from**. The parent
+launches CRIT-05 children using `CreateProcessA`, merges and captures stdout/stderr, waits for
+each child, and records exit status:
 
-This captures the deliberate blocker, API failure, Windows error and production fatal exit
-separately. The 944 GiB request is attempted only after the intentional overlap guarantees that
-it fails; the fixture phases below use a 1 MiB reservation.
-
-Expected markers (actual values will be filled in after Windows CI):
+- `--child-reserve-low-blocker`: reserves a committed, canary-filled 64 KiB host blocker at
+  exactly `USER_MIN`; confirms the monolithic probe still fails with 487; then requires
+  production `runtime_memory_reserve()` to succeed, the first reserved subrange to start at
+  `USER_MIN + 64 KiB`, the blocker to be absent from both tables, guest queries on it to return
+  `ACCESS`, a non-fixed map to land at `USER_MIN + 64 KiB`, `MAP_FIXED`/reserve/crossing
+  requests on the blocker to return `NO_MEMORY` with tables unchanged, and the blocker canary
+  to survive cleanup.
+- `--child-reserve-all-blocked` (legacy alias `--child-reservation-collision`): blocks every
+  free subrange of `[USER_MIN, USER_MAX)`, so no guest subrange remains. Only then must
+  `runtime_memory_reserve()` invoke the failure hook with `region_count=0` and exit 21. The
+  parent requires markers:
 
 ```text
-COLLISION_BLOCKER=RESERVED ...
 COLLISION_PROBE result=NULL error=487 expected=487
 TEST_HOOK_RESERVATION_FAILURE error=487 expected_collision_error=487 region_count=0
-STOP: reserving the PS4 address range ... error 487
-RESULT CRIT-05=COLLISION_REPRODUCED ... win_fail_exit=21 region_table_entries=0
+STOP: reserving the PS4 address range (no free guest subrange) ... error 487
+RESULT CRIT-05.all_blocked=PASS win_fail_exit=21 region_table_entries=0
+```
+
+Additional Mission 7.3 children: `--child-reserve-no-collision` (full-span success, aliasing,
+query, release zeroing via unmap), `--child-reserve-middle-blocker` (84 KiB unaligned blocker;
+hole is excluded through its 64 KiB-aligned end; boundary map/protect/query/clamp/unmap and
+failed-crossing rollback), `--child-reserve-high-blocker` (blocker at `USER_MAX - 64 KiB`),
+and `--child-reserve-multi-blocker` (three non-contiguous blockers, a 128 KiB pocket,
+`find_free` skipping, `MAP_NO_OVERWRITE`, and `batch_map2` stopping at a hole-crossing entry
+with `processed=1`). All children seed only a 4 MiB pagefile section after
+`runtime_memory_reserve()` and verify cleanup returns runtime reservations to `MEM_FREE`
+while host blockers stay byte-identical.
+
+Final summary marker on success:
+
+```text
+RESULT CRIT-05=FIXED subrange_reservation=PASS host_holes_excluded_from_vmas=YES crossing_requests=NO_MEMORY full_exhaustion_exit=21
 ```
 
 ## Phase 2 — production section-view carving fixture
@@ -214,8 +233,51 @@ the final PR head is the commit-specific review evidence.
   `win_fail()` terminates the process on these errors. A future patch needs failure/rollback
   tests; this characterization does not alter that policy.
 
-No production memory-manager rewrite is authorized by this mission or included here. The
-candidate designs require a separate follow-up review using the collected Windows evidence.
+No production memory-manager rewrite was authorized by PR #7's mission. The candidate designs
+required a separate follow-up review using the collected Windows evidence — that follow-up is
+Mission 7.3 below.
+
+## CRIT-05 fix (Mission 7.3)
+
+**Selected design: reserve available address subranges while keeping host-owned occupied
+ranges distinct from guest VMAs** (row 2 of the table above), with the no-collision fast path
+preserved exactly. Rationale from the source: nothing requires the 944 GiB interval to be one
+OS reservation — the guest VMA table (`find_free`/`covered`/`overlaps`) is the guest-address
+contract, and `carve_host()` only needs each individual map/unmap request to lie inside one
+contiguous placeholder span. Guest addresses are never translated; no retry at another host
+base occurs; metadata is inserted only after the corresponding `VirtualAlloc2()` succeeds.
+
+Production changes, all in `src/runtime_memory.c` (plus a comment in `src/runtime.h`):
+
+- `HostRegion` gains a `root` field identifying its originating reservation, so cleanup/coalesce
+  never merges or releases across a host-owned gap.
+- `runtime_memory_reserve()` (now under the table write lock): fast path unchanged (one
+  full-span placeholder). On `ERROR_INVALID_ADDRESS` it walks `[USER_MIN, USER_MAX)` with
+  `VirtualQuery()`, reserves each 64 KiB-aligned `MEM_FREE` subrange exactly at its guest
+  addresses, and records only those. Any other OS error, a query failure, or zero reservable
+  subranges rolls back all partial reservations (`release_host_regions()`) and fails explicitly
+  via `win_fail()`/exit 21 — no partially inconsistent model is published. Occupied intervals
+  (including an unaligned blocker's tail up to the next 64 KiB boundary) become holes.
+- `carve_host()` returns `-1` instead of `win_fail()` when a request is not fully inside one
+  reserved span; `host_map()`/`host_unmap()` propagate it, so guest `place()`/`unmap_locked()`
+  return `NO_MEMORY`/`INVALID`. Mapped state is published only after `MapViewOfFile3()` succeeds.
+- `find_free()` skips holes between reserved spans; `place()` rejects fixed/out-of-range
+  requests before any OS or table mutation and pre-reserves VMA capacity so insertion cannot
+  fail after a successful map; guest protection/query/clamp/write-backing paths are
+  hole-aware through the existing VMA table and hardened against overflow/over-read.
+- `pool()` closes the section handle if the backing view fails; `reserve_range()` ensures the
+  reservation exists before validating a fixed request (previously a fixed reserve before any
+  pool use could reach the fatal carve path).
+
+Guest-capacity consequence (explicit, not silent): a guest request contained in an available
+subrange succeeds at its exact guest address; a request crossing a hole returns `NO_MEMORY`,
+so a hole can make a very large contiguous guest mapping fail despite enough aggregate free
+space. This degraded-capacity policy is the documented row-2 trade-off. The GNM
+tessellation-factor ring at `0x7FF000000` (inside the guest interval) is unaffected in the
+no-collision case; if a host hole covered it, dependent mappings would fail explicitly.
+
+CRIT-06 is **not** fixed by this work: `carve_host()` still unmaps and rebuilds sibling views
+with the transient gap and temporary `PAGE_READWRITE` window characterized below.
 
 ## Results
 
@@ -284,4 +346,30 @@ The reported `VirtualQuery()` MBI records were:
 The Runtime CI check for each PR head is the commit-specific release evidence: it logs the exact
 tested source SHA and emits API errors, MBI state/protection, child outcomes and cleanup evidence
 as grouped check annotations; the full log is uploaded as an artifact. No production reservation
-fallback or carving fix was applied.
+fallback or carving fix was applied by PR #7.
+
+### Mission 7.3 — CRIT-05 fix verification (native Windows, this PR)
+
+<!-- CI-RUN: filled in after the Runtime CI run on the final PR head. -->
+The updated harness must report, from the exact tested source SHA:
+
+```text
+RESULT CRIT-05.no_collision=PASS
+RESULT CRIT-05.low_blocker=PASS recovered=YES fixed_on_blocker=NO_MEMORY
+RESULT CRIT-05.middle_blocker=PASS unaligned_blocker=84KiB boundary_rollback=PASS
+RESULT CRIT-05.high_blocker=PASS
+RESULT CRIT-05.multi_blocker=PASS disjoint_subranges=PASS batch_partial_stop=PASS
+RESULT CRIT-05.all_blocked=PASS win_fail_exit=21 region_table_entries=0
+RESULT CRIT-05=FIXED subrange_reservation=PASS host_holes_excluded_from_vmas=YES crossing_requests=NO_MEMORY full_exhaustion_exit=21
+RESULT CRIT-06.fixture=PASS ...
+RESULT CRIT-06.gap=DIRECTLY_OBSERVED ...        (characterization, unchanged)
+RESULT CRIT-06.concurrent_access=ACCESS_VIOLATION_REPRODUCED ...  (characterization, unchanged)
+RESULT CRIT-06.temporary_protection=WRITABLE_PROTECTION_OBSERVED ... (characterization, unchanged)
+RESULT SUMMARY failures=0
+```
+
+Local (Linux) validation for Mission 7.3: `src/runtime_memory.c` compiles with GCC
+`-Wall -Wextra -Werror` (Linux branch only — this sandbox has no Windows toolchain, Wine, or
+cross-compiler); the Python suite reports 98 tests / 28 skips; the standalone C/C++ tests
+(content, file-mods, mutex-cond 32 checks, coroutine-frames, upscaler-support, dlss-sr) pass.
+Linux results do not validate the `_WIN32` path; the Runtime CI run above does.
