@@ -1098,3 +1098,13 @@ Remaining: CRIT-06 (transient missing-view interval, concurrent access violation
 writable protections during `carve_host()`) is unresolved and needs its own safepoint/carve
 design. Degraded-capacity limitation: a guest mapping larger than every available subrange
 fails with `NO_MEMORY` even when aggregate free space suffices.
+
+Mission 7.3 verification update: the fix is implemented in `b91296a` with harness corrections
+in `19b3a36`. Runtime CI run 39946258119 tested exact source
+`19b3a36238063579a4c5cb1e87294bc71de4e8ed` and reported all six CRIT-05 children PASS with
+`RESULT SUMMARY failures=0` (`RESULT CRIT-05=FIXED ...`), while CRIT-06 remained
+characterized-not-fixed (gap directly observed, concurrent access violation reproduced,
+temporary writable protection observed). The first run on `b91296a` failed on three harness
+bugs (under-sized direct allocations in the test children), not on production code; they are
+fixed and re-verified in `19b3a36`. PR: https://github.com/lostpilot404/Uncharted/pull/8
+(not merged automatically).

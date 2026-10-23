@@ -350,8 +350,20 @@ fallback or carving fix was applied by PR #7.
 
 ### Mission 7.3 — CRIT-05 fix verification (native Windows, this PR)
 
-<!-- CI-RUN: filled in after the Runtime CI run on the final PR head. -->
-The updated harness must report, from the exact tested source SHA:
+Native evidence: [Runtime CI run 39946258119](https://github.com/lostpilot404/Uncharted/actions/runs/39946258119)
+on PR #8, `TESTED_SOURCE_COMMIT=19b3a36238063579a4c5cb1e87294bc71de4e8ed` (the harness was built
+from the SHA-verified PR-head archive; the workflow checkout was the synthetic merge
+`b728ead314f3fc35781dd9c1ee2565cdd19c0740`). All six CRIT-05 children passed
+(`RESULT SUMMARY failures=0`); notably even the "no-collision" child found 12 pre-existing
+occupied intervals in the CI process and reserved 2 subranges (966651 of 966656 MiB), the
+low-blocker child recovered with 1 subrange starting at `USER_MIN + 64 KiB`, and the
+all-blocked child still exited 21 with an empty table. An earlier run on `b91296a`
+(run 39934002061) failed with the same three harness bugs fixed in `19b3a36` (under-sized
+direct-memory allocations in the middle/high/multi test children — production code was not
+the cause; the high child's access violation was the test reading an unmapped view after a
+failed map). CRIT-06 markers in the passing run remain: gap `DIRECTLY_OBSERVED`, concurrent
+`ACCESS_VIOLATION_REPRODUCED` (0xC0000005), temporary protection `WRITABLE_PROTECTION_OBSERVED`.
+The updated harness reports, from the exact tested source SHA:
 
 ```text
 RESULT CRIT-05.no_collision=PASS
