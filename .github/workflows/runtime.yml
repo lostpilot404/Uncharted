@@ -155,10 +155,14 @@ jobs:
           echo "CHECKED_OUT_WORKFLOW_COMMIT=$(git rev-parse HEAD)" | tee -a "$log"
           # This one-TU harness includes production runtime_memory.c from the exact source commit
           # and stubs only its two unrelated project-level references. No GPU/runtime libraries.
+          compile_status=0
           run_checked compile clang -std=c11 -O2 -g -Wall -Wextra -Werror -pthread \
             -I"$source_root/src" "$source_root/tests/test_windows_memory.c" -lonecore \
-            -o out/windows-memory-test.exe
-          run_checked execute out/windows-memory-test.exe
+            -o out/windows-memory-test.exe || compile_status=$?
+          execute_status=0
+          if (( compile_status == 0 )); then
+            run_checked execute out/windows-memory-test.exe || execute_status=$?
+          fi
           emit_notice() {
             local topic="$1" pattern="$2" text
             text=$(grep -E "$pattern" "$log" | awk 'BEGIN { ORS = " | " } { print }') || true
