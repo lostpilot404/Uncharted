@@ -186,6 +186,10 @@ jobs:
           emit_notice 'overall' '^(RESULT SUMMARY|PASS: Windows memory)'
           echo "::notice title=windows-memory::tested_source_commit=$source_commit"
           echo "::notice title=windows-memory::workflow_checkout_commit=$(git rev-parse HEAD)"
+          if (( compile_status || execute_status )); then
+            echo "::error title=windows-memory::harness failed (compile=$compile_status execute=$execute_status)"
+            exit 1
+          fi
 
       - name: Python test suite
         shell: msys2 {0}

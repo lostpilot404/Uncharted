@@ -582,9 +582,9 @@ static int reserve_middle_blocker_child(void) {
         return 33;
     }
     int64_t phys = -1;
-    check(direct_allocate(0, (int64_t)TEST_POOL_SIZE, 8 * GRANULARITY, GRANULARITY, 2, &phys) == 0,
+    check(direct_allocate(0, (int64_t)TEST_POOL_SIZE, 16 * GRANULARITY, GRANULARITY, 2, &phys) == 0,
           "direct_allocate succeeds for middle-boundary views");
-    for (uint64_t off = 0; off < 8 * GRANULARITY; off += PAGE) {
+    for (uint64_t off = 0; off < 16 * GRANULARITY; off += PAGE) {
         uint64_t m = marker_for(off);
         memcpy(backing_base + off, &m, sizeof(m));
     }
@@ -720,20 +720,22 @@ static int reserve_high_blocker_child(void) {
         return 43;
     }
     int64_t phys = -1;
-    check(direct_allocate(0, (int64_t)TEST_POOL_SIZE, 2 * GRANULARITY, GRANULARITY, 1, &phys) == 0,
+    check(direct_allocate(0, (int64_t)TEST_POOL_SIZE, 4 * GRANULARITY, GRANULARITY, 1, &phys) == 0,
           "direct_allocate succeeds for high-boundary test");
-    for (uint64_t off = 0; off < 2 * GRANULARITY; off += PAGE) {
+    for (uint64_t off = 0; off < 4 * GRANULARITY; off += PAGE) {
         uint64_t m = marker_for(off);
         memcpy(backing_base + off, &m, sizeof(m));
     }
 
     uintptr_t near_top = high_blocker_base - 2 * GRANULARITY;
     void *top_view = (void *)near_top;
-    check(direct_map(&top_view, 2 * GRANULARITY, 3, MAP_FIXED_FLAG,
-                     (int64_t)GRANULARITY, GRANULARITY) == 0,
-          "MAP_FIXED direct_map succeeds right up to USER_MAX - 64 KiB");
-    check(check_markers_step(near_top, 2 * GRANULARITY, GRANULARITY, PAGE, "high-boundary"),
-          "high-boundary view preserves backing offset and markers");
+    int32_t top_rc = direct_map(&top_view, 2 * GRANULARITY, 3, MAP_FIXED_FLAG,
+                                (int64_t)GRANULARITY, GRANULARITY);
+    check(top_rc == 0, "MAP_FIXED direct_map succeeds right up to USER_MAX - 64 KiB");
+    if (top_rc == 0) {
+        check(check_markers_step(near_top, 2 * GRANULARITY, GRANULARITY, PAGE, "high-boundary"),
+              "high-boundary view preserves backing offset and markers");
+    }
 
     void *cross_top = (void *)(high_blocker_base - GRANULARITY);
     check(direct_map(&cross_top, 2 * GRANULARITY, 3, MAP_FIXED_FLAG, 0, GRANULARITY) == NO_MEMORY,
@@ -741,9 +743,12 @@ static int reserve_high_blocker_child(void) {
     void *hint_top = (void *)high_blocker_base;
     check(direct_map(&hint_top, GRANULARITY, 3, 0, 0, GRANULARITY) == NO_MEMORY,
           "hinted non-fixed direct_map at blocked USER_MAX - 64 KiB returns NO_MEMORY when exhausted");
-    check(check_markers_step(near_top, 2 * GRANULARITY, GRANULARITY, PAGE, "high-after-rollback") &&
-          verify_host_blocker_intact(&blocker, "after high-boundary operations"),
-          "high-boundary guest view and host blocker survive failed high-end requests");
+    if (top_rc == 0) {
+        check(check_markers_step(near_top, 2 * GRANULARITY, GRANULARITY, PAGE, "high-after-rollback"),
+              "high-boundary guest view survives failed high-end requests");
+    }
+    check(verify_host_blocker_intact(&blocker, "after high-boundary operations"),
+          "high-end host blocker survives failed high-end requests");
 
     check(direct_unmap((void *)near_top, 2 * GRANULARITY) == 0 && vma_count == 0,
           "direct_unmap cleans up high-boundary guest view");
@@ -799,9 +804,9 @@ static int reserve_multi_blocker_child(void) {
         return 53;
     }
     int64_t phys = -1;
-    check(direct_allocate(0, (int64_t)TEST_POOL_SIZE, 8 * GRANULARITY, GRANULARITY, 1, &phys) == 0,
+    check(direct_allocate(0, (int64_t)TEST_POOL_SIZE, 16 * GRANULARITY, GRANULARITY, 1, &phys) == 0,
           "direct_allocate succeeds for multi-blocker test");
-    for (uint64_t off = 0; off < 8 * GRANULARITY; off += PAGE) {
+    for (uint64_t off = 0; off < 16 * GRANULARITY; off += PAGE) {
         uint64_t m = marker_for(off);
         memcpy(backing_base + off, &m, sizeof(m));
     }
@@ -839,11 +844,14 @@ static int reserve_multi_blocker_child(void) {
     batch[1].prot = 3;
     batch[1].operation = 0;
     int processed = -1;
-    check(batch_map2(batch, 2, &processed, MAP_FIXED_FLAG) == NO_MEMORY && processed == 1,
+    int32_t batch_rc = batch_map2(batch, 2, &processed, MAP_FIXED_FLAG);
+    check(batch_rc == NO_MEMORY && processed == 1,
           "sceKernelBatchMap2 stops on hole-crossing entry and reports processed=1");
-    check(check_markers_step(USER_MIN + 2 * GRANULARITY, GRANULARITY, 5 * GRANULARITY, PAGE,
-                             "batch-entry-0"),
-          "completed batch entry 0 remains mapped with intact backing offset after entry 1 fails");
+    if (processed == 1) {
+        check(check_markers_step(USER_MIN + 2 * GRANULARITY, GRANULARITY, 5 * GRANULARITY, PAGE,
+                                 "batch-entry-0"),
+              "completed batch entry 0 remains mapped with intact backing offset after entry 1 fails");
+    }
 
     check(direct_unmap((void *)(USER_MIN + GRANULARITY), 8 * GRANULARITY) == 0 && vma_count == 0,
           "unmap across multiple pockets/blockers clears guest VMAs cleanly");
