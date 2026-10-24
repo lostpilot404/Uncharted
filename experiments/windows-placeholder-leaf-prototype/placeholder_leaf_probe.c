@@ -83,7 +83,7 @@ typedef struct {
     unsigned rounds;
 } Reader;
 
-static void fail_stop(const char *reason) {
+__declspec(noreturn) static void fail_stop(const char *reason) {
     printf("FAIL_STOP reason=%s exit=%d cleanup=NOT_ATTEMPTED_ON_UNCERTAIN_LAYOUT\n",
            reason, FAIL_STOP_EXIT);
     fflush(NULL);
@@ -168,7 +168,6 @@ static size_t extent_at(const Probe *p, size_t leaf) {
         if (leaf >= p->extents[i].first && leaf < p->extents[i].first + p->extents[i].count)
             return i;
     fail_stop("ledger does not cover leaf");
-    return 0;
 }
 static int target_contains(const Probe *p, size_t first, size_t count) {
     return first >= p->target_first && first <= p->target_end && count <= p->target_end - first;
