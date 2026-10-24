@@ -49,6 +49,19 @@ jobs:
           & experiments/windows-placeholder-leaf-prototype/run_probe.ps1 `
             -Executable out/placeholder-leaf-prototype/Release/placeholder_leaf_probe.exe `
             -OutputDirectory out/placeholder-leaf-logs -Benchmark:$bench
+      - name: Surface compiler and probe diagnostics in check annotations
+        if: always()
+        shell: pwsh
+        run: |
+          # Keep full artifacts, but also expose diagnostics without a log-blob download.
+          Get-ChildItem out/placeholder-leaf-logs -Filter '*.log' -ErrorAction SilentlyContinue |
+            ForEach-Object { Get-Content -LiteralPath $_.FullName } |
+            Where-Object { $_ -match '\b(error|warning) [A-Z]+[0-9]+\b|^(SOURCE |BUILD |OS |QUERY=FAIL|CHECK=FAIL|FAIL_STOP|REAL_OS_FAILURE|MARKER=FAIL|RESULT=|CASE_RESULT=|SIMULATION_CHECK=)' } |
+            Select-Object -Unique -First 80 |
+            ForEach-Object {
+              $message = $_.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              Write-Output "::notice title=placeholder-leaf-diagnostic::$message"
+            }
       - name: Preserve full logs even on failure
         if: always()
         uses: actions/upload-artifact@v4
