@@ -1108,3 +1108,29 @@ temporary writable protection observed). The first run on `b91296a` failed on th
 bugs (under-sized direct allocations in the test children), not on production code; they are
 fixed and re-verified in `19b3a36`. PR: https://github.com/lostpilot404/Uncharted/pull/8
 (not merged automatically).
+
+Mission 7.4 update (CRIT-06, PR #9, not merged): CRIT-06 is now split into hazard A
+(transient missing views under concurrent raw-pointer access) and hazard B (temporary
+`PAGE_READWRITE` during sibling reconstruction). For hazard B, the tested temporary
+`PAGE_READWRITE` window is eliminated: `view_map()` maps directly at the target protection,
+rebuilt siblings start at a common initial protection that never grants write/execute
+permission unless every saved run allows it, and the original per-run protections are
+restored afterward. This is not continuous preservation of every saved protection: with
+the empirically verified Windows constraint that `VirtualProtect` rejects a
+`PAGE_NOACCESS`-mapped view (error 87), mixed siblings start `PAGE_READONLY`, temporarily
+making originally `PAGE_NOACCESS` pages readable until the restore loop lowers those runs
+back to `PAGE_NOACCESS`. The harness protection child is a strict regression gate across
+repeated carves plus a direct `PAGE_NOACCESS` map test. Runtime CI run 39977900549 tested
+exact source `b25bf34565cb4fb28e1dbc953a0104646b6a7356`: `RESULT SUMMARY failures=0`,
+`CRIT-05=FIXED` retained, `CRIT-06.temporary_protection=FIXED` (the harness label for “no
+temporary writable reconstruction window observed,” not a claim that every saved protection
+was continuously preserved). In that run the first mixed-sibling hook reported the tracked
+page as `PAGE_READONLY` (`0x2`) before restoration to `PAGE_NOACCESS` (`0x1`); neither that
+carve nor the repeat carve reported `PAGE_READWRITE`. Windows package run 39977900593 and
+Rust launcher CI run 39977900683 also passed at the same tested SHA. Hazard A remains
+characterized (`gap=DIRECTLY_OBSERVED`, `concurrent_access=ACCESS_VIOLATION_REPRODUCED`
+0xC0000005) and UNRESOLVED: sibling views are transiently absent, so concurrent raw-pointer
+access can still cause an access violation. No safepoint/thread registry exists and a
+provably complete stop-the-world is not safely implementable in this codebase yet;
+smallest next step is guest-thread registration plus a cooperative HLE-boundary safepoint.
+PR: https://github.com/lostpilot404/Uncharted/pull/9 (not merged automatically).

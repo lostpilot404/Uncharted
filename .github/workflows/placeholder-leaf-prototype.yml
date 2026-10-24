@@ -1,0 +1,58 @@
+name: Windows placeholder-leaf prototype
+
+# Deliberately separate from Runtime CI. Publishing this file on a branch does
+# not make workflow_dispatch available until GitHub registers it on default.
+on:
+  workflow_dispatch:
+    inputs:
+      benchmark:
+        description: Run bounded 4/64/256/1024-leaf benchmark (3 repetitions)
+        type: boolean
+        default: true
+  push:
+    branches: [arena/96680190-uncharted]
+    paths:
+      - 'experiments/windows-placeholder-leaf-prototype/**'
+      - '.github/workflows/placeholder-leaf-prototype.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  native-probe:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record exact source and configure x64 Windows SDK build
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out/placeholder-leaf-logs | Out-Null
+          git rev-parse HEAD | Tee-Object out/placeholder-leaf-logs/source-sha.txt
+          Get-FileHash experiments/windows-placeholder-leaf-prototype/placeholder_leaf_probe.c -Algorithm SHA256 |
+            Format-List | Out-File out/placeholder-leaf-logs/source-digest.txt
+          cmake --version
+          cmake -S experiments/windows-placeholder-leaf-prototype -B out/placeholder-leaf-prototype -A x64 2>&1 |
+            Tee-Object out/placeholder-leaf-logs/configure.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build only the standalone probe
+        shell: pwsh
+        run: |
+          cmake --build out/placeholder-leaf-prototype --config Release --verbose 2>&1 |
+            Tee-Object out/placeholder-leaf-logs/build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Execute lifecycle, alignment, siblings, invalidation, backing and injected failures
+        shell: pwsh
+        run: |
+          # Push events use the bounded benchmark too; manual runs may omit it.
+          $bench = '${{ github.event_name }}' -eq 'push' -or '${{ inputs.benchmark }}' -eq 'true'
+          & experiments/windows-placeholder-leaf-prototype/run_probe.ps1 `
+            -Executable out/placeholder-leaf-prototype/Release/placeholder_leaf_probe.exe `
+            -OutputDirectory out/placeholder-leaf-logs -Benchmark:$bench
+      - name: Preserve full logs even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: placeholder-leaf-${{ github.sha }}
+          path: out/placeholder-leaf-logs/
+          if-no-files-found: error

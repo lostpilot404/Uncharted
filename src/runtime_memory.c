@@ -342,11 +342,44 @@ void runtime_memory_reserve(void) {
            count,reserved_bytes>>20,(USER_MAX-USER_MIN)>>20);
 }
 static void view_map(const HostRegion *r, DWORD protect) {
-    DWORD initial=protect==PAGE_NOACCESS ? PAGE_READWRITE : protect, old;
-    if (!MapViewOfFile3(section,GetCurrentProcess(),(void *)r->start,r->phys,r->end-r->start,MEM_REPLACE_PLACEHOLDER,initial,NULL,0))
+    /* Map directly at the target protection: a temporary PAGE_READWRITE view (the previous
+     * behaviour for PAGE_NOACCESS targets and for rebuilt siblings) would bypass guest/GPU
+     * page tracking until the saved protections are restored. MapViewOfFile3 accepts
+     * PAGE_NOACCESS for section views, so no writable intermediate is needed. */
+    if (!MapViewOfFile3(section,GetCurrentProcess(),(void *)r->start,r->phys,r->end-r->start,MEM_REPLACE_PLACEHOLDER,protect,NULL,0))
         win_fail("MapViewOfFile3",r->start,r->end-r->start);
-    if (initial!=protect && !VirtualProtect((void *)r->start,r->end-r->start,protect,&old))
-        win_fail("VirtualProtect",r->start,r->end-r->start);
+}
+/* Initial protection for a rebuilt view (CRIT-06 hazard B): writable/executable only where
+ * every saved run allows it, so reconstruction never reintroduces a writable window for a
+ * sibling whose saved runs were not all writable. Read permission is also intersected,
+ * except for one documented fallback below: a mixed sibling containing PAGE_NOACCESS runs
+ * starts PAGE_READONLY because Windows cannot restore protections from a PAGE_NOACCESS
+ * view, temporarily making those originally PAGE_NOACCESS pages readable. Runs are restored
+ * individually afterwards, reinstating each original per-run protection. */
+static DWORD protect_initial(const ProtRun *runs, size_t n) {
+    if (!n) return PAGE_NOACCESS;
+    int may_read=1, may_write=1, may_exec=1;
+    for (size_t i=0;i<n;++i) {
+        DWORD base=runs[i].protect & 0xFF;
+        may_read &= (base==PAGE_READONLY || base==PAGE_READWRITE || base==PAGE_WRITECOPY ||
+                     base==PAGE_EXECUTE_READ || base==PAGE_EXECUTE_READWRITE || base==PAGE_EXECUTE_WRITECOPY);
+        may_write &= (base==PAGE_READWRITE || base==PAGE_WRITECOPY ||
+                      base==PAGE_EXECUTE_READWRITE || base==PAGE_EXECUTE_WRITECOPY);
+        may_exec &= (base==PAGE_EXECUTE || base==PAGE_EXECUTE_READ ||
+                     base==PAGE_EXECUTE_READWRITE || base==PAGE_EXECUTE_WRITECOPY);
+    }
+    if (may_write) return may_exec ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE;
+    if (may_exec) return may_read ? PAGE_EXECUTE_READ : PAGE_EXECUTE;
+    if (may_read) return PAGE_READONLY;
+    /* All runs deny reads too. A wholly PAGE_NOACCESS sibling can be mapped PAGE_NOACCESS
+     * directly, but a mixed sibling cannot: Windows rejects VirtualProtect on a view mapped
+     * PAGE_NOACCESS (ERROR_INVALID_PARAMETER, verified by the CRIT-06 harness), so the saved
+     * PAGE_NOACCESS runs could never be carved back out of a PAGE_NOACCESS view. Fall back to
+     * PAGE_READONLY -- still never writable or executable beyond the saved runs -- and let the
+     * restore loop lower the PAGE_NOACCESS runs (the direction VirtualProtect accepts). The
+     * transient cost is a read-only window over those pages, never a writable one. */
+    for (size_t i=0;i<n;++i) if ((runs[i].protect & 0xFF)!=PAGE_NOACCESS) return PAGE_READONLY;
+    return PAGE_NOACCESS;
 }
 static size_t save_protections(uintptr_t start, uintptr_t end, ProtRun **runs, size_t count, size_t *capacity) {
     for (uintptr_t at=start; at<end;) {
@@ -376,6 +409,7 @@ static int carve_host(uintptr_t a, uintptr_t b, size_t *at_out) {
     if (first==last-1 && !left.mapped && lo==a && hi==b) { *at_out=first; return 0; }
     if (region_reserve(region_count+2)) { fputs("Out of memory (host regions)\n",stderr); exit(1); }
     ProtRun *runs=NULL; size_t nruns=0, capacity=0, left_runs=0;
+    DWORD initial_left=PAGE_NOACCESS, initial_right=PAGE_NOACCESS;
     if (keep_left) left_runs=nruns=save_protections(lo,a,&runs,nruns,&capacity);
     if (keep_right) nruns=save_protections(b,hi,&runs,nruns,&capacity);
     for (size_t i=first;i<last;++i) if (regions[i].mapped) {
@@ -398,7 +432,8 @@ static int carve_host(uintptr_t a, uintptr_t b, size_t *at_out) {
         if (keep_left) {
             HostRegion rebuilt=regions[at];
             rebuilt.phys=left.phys; rebuilt.mapped=1;
-            view_map(&rebuilt,PAGE_READWRITE);
+            initial_left=protect_initial(runs,left_runs);
+            view_map(&rebuilt,initial_left);
             regions[at]=rebuilt;
         }
         ++at;
@@ -410,7 +445,8 @@ static int carve_host(uintptr_t a, uintptr_t b, size_t *at_out) {
         if (keep_right) {
             HostRegion rebuilt=regions[at+1];
             rebuilt.phys=right.phys+(b-right.start); rebuilt.mapped=1;
-            view_map(&rebuilt,PAGE_READWRITE);
+            initial_right=protect_initial(runs+left_runs,nruns-left_runs);
+            view_map(&rebuilt,initial_right);
             regions[at+1]=rebuilt;
         }
     }
@@ -420,7 +456,11 @@ static int carve_host(uintptr_t a, uintptr_t b, size_t *at_out) {
 #endif
     for (size_t i=0;i<nruns;++i) {
         DWORD old;
-        if (runs[i].protect!=PAGE_READWRITE && !VirtualProtect((void *)runs[i].start,runs[i].end-runs[i].start,runs[i].protect,&old))
+        /* Apply every saved run that differs from the sibling's initial protection (runs
+         * already at that protection need no call -- and a PAGE_NOACCESS view must not be
+         * VirtualProtect'ed at all, which Windows rejects with ERROR_INVALID_PARAMETER). */
+        DWORD initial=i<left_runs ? initial_left : initial_right;
+        if (runs[i].protect!=initial && !VirtualProtect((void *)runs[i].start,runs[i].end-runs[i].start,runs[i].protect,&old))
             win_fail("restoring page protection",runs[i].start,runs[i].end-runs[i].start);
     }
     (void)left_runs;

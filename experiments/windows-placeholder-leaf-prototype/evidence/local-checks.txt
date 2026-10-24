@@ -1,0 +1,155 @@
+LOCAL CHECKS ONLY. No native Windows build, executable run, timings or API results.
+C source SHA256: e5410a9dfa1b86beb4c8e4d50abe8adfb133a984524ebef50a0a57d132734eed
+Cross-check uses Zig-bundled MinGW headers, NOT an installed Microsoft Windows SDK.
+MSVC compatibility macros on the cross command are for this limited check only.
+Earlier -fsyntax-only attempts failed on driver unused-argument handling, MinGW anonymous-union switches, then Zig missing temporary object rename; no native result.
+An initial syntax command timed out; its final exit was not captured. It was not repeated unchanged.
+
+$ uname -a
+Linux e2b.local 6.1.158+ #1 SMP PREEMPT_DYNAMIC Mon May 11 18:48:24 UTC 2026 x86_64 GNU/Linux
+EXIT_CODE=0
+
+$ /home/user/.cache/leaf-probe-tools/ziglang/zig version
+0.17.0
+EXIT_CODE=0
+
+$ /home/user/.cache/leaf-probe-tools/ziglang/zig cc --version
+clang version 22.1.8
+Target: x86_64-unknown-linux5.10.0-gnu2.36.0
+Thread model: posix
+InstalledDir: /home/user/.cache/leaf-probe-tools/ziglang
+EXIT_CODE=0
+
+$ /home/user/.cache/leaf-probe-tools/ziglang/zig cc -target x86_64-windows-gnu -std=c11 -fms-extensions -D_M_X64=100 -D_MSC_VER=1930 -D_MSC_EXTENSIONS=1 -D_WIN32_WINNT=0x0a00 -DNTDDI_VERSION=0x0A000007 -Wall -Wextra -Werror -c experiments/windows-placeholder-leaf-prototype/placeholder_leaf_probe.c -o /home/user/.cache/leaf-probe-cross.obj
+
+EXIT_CODE=0
+
+$ objdump -h /home/user/.cache/leaf-probe-cross.obj
+
+/home/user/.cache/leaf-probe-cross.obj:     file format pe-x86-64
+
+Sections:
+Idx Name          Size      VMA               LMA               File off  Algn
+  0 .text         0000c199  0000000000000000  0000000000000000  000001a4  2**4
+                  CONTENTS, ALLOC, LOAD, RELOC, READONLY, CODE
+  1 .data         00004c78  0000000000000000  0000000000000000  00010bb3  2**4
+                  CONTENTS, ALLOC, LOAD, RELOC, DATA
+  2 .bss          00000060  0000000000000000  0000000000000000  00000000  2**3
+                  ALLOC
+  3 .xdata        00000210  0000000000000000  0000000000000000  0001876f  2**2
+                  CONTENTS, ALLOC, LOAD, RELOC, READONLY, DATA
+  4 .rdata        000020e3  0000000000000000  0000000000000000  000189d9  2**4
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  5 .rdata$.refptr.__stack_chk_guard 00000008  0000000000000000  0000000000000000  0001aabc  2**3
+                  CONTENTS, ALLOC, LOAD, RELOC, READONLY, DATA, LINK_ONCE_DISCARD (COMDAT .refptr.__stack_chk_guard 12)
+  6 .debug$S      00004350  0000000000000000  0000000000000000  0001aace  2**2
+                  CONTENTS, RELOC, READONLY, DEBUGGING
+  7 .debug$T      000042b0  0000000000000000  0000000000000000  00020282  2**2
+                  CONTENTS, READONLY, DEBUGGING
+  8 .pdata        000001bc  0000000000000000  0000000000000000  00024532  2**2
+                  CONTENTS, ALLOC, LOAD, RELOC, READONLY, DATA
+  9 .llvm_addrsig 00000039  0000000000000000  0000000000000000  00024b44  2**0
+                  CONTENTS, READONLY, EXCLUDE, NOREAD
+EXIT_CODE=0
+
+$ /home/user/.cache/leaf-probe-tools/cmake/data/bin/cmake --version
+cmake version 4.4.4
+
+CMake suite maintained and supported by Kitware (kitware.com/cmake).
+EXIT_CODE=0
+
+$ /home/user/.cache/leaf-probe-tools/cmake/data/bin/cmake -S experiments/windows-placeholder-leaf-prototype -B /home/user/.cache/leaf-probe-posix-guard
+CMake Error at CMakeLists.txt:4 (message):
+  Native Windows qualification required.  No POSIX fallback is provided.
+
+
+-- Configuring incomplete, errors occurred!
+EXIT_CODE=1
+
+$ git diff --check
+
+EXIT_CODE=0
+
+$ git diff --cached --stat
+
+EXIT_CODE=0
+
+$ git status --porcelain=v1 --untracked-files=all
+ M .github/workflows/runtime.yml
+ M docs/gemini-audit-triage.md
+ M docs/windows-memory-test-plan.md
+ M src/runtime_memory.c
+ M tests/test_windows_memory.c
+?? .github/workflows/placeholder-leaf-prototype.yml
+?? experiments/windows-placeholder-leaf-prototype/CMakeLists.txt
+?? experiments/windows-placeholder-leaf-prototype/README.md
+?? experiments/windows-placeholder-leaf-prototype/evidence/baseline.json
+?? experiments/windows-placeholder-leaf-prototype/placeholder_leaf_probe.c
+?? experiments/windows-placeholder-leaf-prototype/run_probe.ps1
+EXIT_CODE=0
+
+PyYAML 6.0.3 BaseLoader syntax + workflow structure check: PASS
+Protected preexisting file hashes: 5/5 identical to preflight; no staged files.
+PowerShell runner, native CMake/MSVC build and workflow execution: NOT RUN.
+
+FINAL SOURCE CHECK (supersedes the earlier object build after review improvements)
+$ /home/user/.cache/leaf-probe-tools/ziglang/zig cc -target x86_64-windows-gnu -std=c11 -fms-extensions -D_M_X64=100 -D_MSC_VER=1930 -D_MSC_EXTENSIONS=1 -D_WIN32_WINNT=0x0a00 -DNTDDI_VERSION=0x0A000007 -Wall -Wextra -Werror -c experiments/windows-placeholder-leaf-prototype/placeholder_leaf_probe.c -o /home/user/.cache/leaf-probe-cross.obj
+
+EXIT_CODE=0
+
+$ objdump -h /home/user/.cache/leaf-probe-cross.obj
+
+/home/user/.cache/leaf-probe-cross.obj:     file format pe-x86-64
+
+Sections:
+Idx Name          Size      VMA               LMA               File off  Algn
+  0 .text         0000cb39  0000000000000000  0000000000000000  000001a4  2**4
+                  CONTENTS, ALLOC, LOAD, RELOC, READONLY, CODE
+  1 .data         00005008  0000000000000000  0000000000000000  00011805  2**4
+                  CONTENTS, ALLOC, LOAD, RELOC, DATA
+  2 .bss          00000060  0000000000000000  0000000000000000  00000000  2**3
+                  ALLOC
+  3 .xdata        00000214  0000000000000000  0000000000000000  000199a9  2**2
+                  CONTENTS, ALLOC, LOAD, RELOC, READONLY, DATA
+  4 .rdata        000021c6  0000000000000000  0000000000000000  00019c17  2**4
+                  CONTENTS, ALLOC, LOAD, READONLY, DATA
+  5 .rdata$.refptr.__stack_chk_guard 00000008  0000000000000000  0000000000000000  0001bddd  2**3
+                  CONTENTS, ALLOC, LOAD, RELOC, READONLY, DATA, LINK_ONCE_DISCARD (COMDAT .refptr.__stack_chk_guard 12)
+  6 .debug$S      00004394  0000000000000000  0000000000000000  0001bdef  2**2
+                  CONTENTS, RELOC, READONLY, DEBUGGING
+  7 .debug$T      000042b0  0000000000000000  0000000000000000  000215fb  2**2
+                  CONTENTS, READONLY, DEBUGGING
+  8 .pdata        000001bc  0000000000000000  0000000000000000  000258ab  2**2
+                  CONTENTS, ALLOC, LOAD, RELOC, READONLY, DATA
+  9 .llvm_addrsig 00000039  0000000000000000  0000000000000000  00025ebd  2**0
+                  CONTENTS, READONLY, EXCLUDE, NOREAD
+EXIT_CODE=0
+
+$ git diff --check
+
+EXIT_CODE=0
+
+$ git status --porcelain=v1 --untracked-files=all
+ M .github/workflows/runtime.yml
+ M docs/gemini-audit-triage.md
+ M docs/windows-memory-test-plan.md
+ M src/runtime_memory.c
+ M tests/test_windows_memory.c
+?? .github/workflows/placeholder-leaf-prototype.yml
+?? experiments/windows-placeholder-leaf-prototype/CMakeLists.txt
+?? experiments/windows-placeholder-leaf-prototype/README.md
+?? experiments/windows-placeholder-leaf-prototype/REPORT.md
+?? experiments/windows-placeholder-leaf-prototype/evidence/baseline.json
+?? experiments/windows-placeholder-leaf-prototype/evidence/local-checks.txt
+?? experiments/windows-placeholder-leaf-prototype/placeholder_leaf_probe.c
+?? experiments/windows-placeholder-leaf-prototype/run_probe.ps1
+EXIT_CODE=0
+
+$ git diff --cached --stat
+
+EXIT_CODE=0
+
+Windows-object import inspection (not runtime qualification): CreateFileMappingW import present; no static CreateFileMapping2/MapViewOfFile3/VirtualAlloc2/UnmapViewOfFile2 import.
+Final YAML syntax/structure and all-new-file whitespace checks: PASS
+Final baseline check: same branch/HEAD; 5/5 original hashes unchanged; index empty.
+NATIVE_WINDOWS=NOT_RUN; SDK_BUILD=NOT_RUN; POWERSHELL=NOT_RUN; WORKFLOW=UNPUBLISHED_NOT_RUN.
