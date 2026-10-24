@@ -182,7 +182,7 @@ jobs:
           emit_notice 'CRIT-06 gap' '^(RESULT CRIT-06\.gap=|GAP_(LEFT|RIGHT)_DURING_UNMAP |GAP_DIRECTLY_OBSERVED=|--- CRIT-06 direct gap)'
           emit_notice 'CRIT-06 concurrent' '^(RESULT CRIT-06\.concurrent_access=|CONCURRENT_ACCESS_(GATE|ATTEMPT|COMPLETED)=|--- CRIT-06 isolated concurrent access)'
           emit_notice 'CRIT-06 protection' '^(RESULT CRIT-06\.temporary_protection=|TEMP_WRITABLE_PROTECTION=|--- CRIT-06 temporary protection)'
-          emit_notice 'harness-failures' '^(FAIL:|--- CRIT|RESULT CRIT-05)'
+          emit_notice 'harness-failures' '^(FAIL:|STOP: |--- CRIT|RESULT CRIT-05)'
           emit_notice 'overall' '^(RESULT SUMMARY|PASS: Windows memory)'
           echo "::notice title=windows-memory::tested_source_commit=$source_commit"
           echo "::notice title=windows-memory::workflow_checkout_commit=$(git rev-parse HEAD)"

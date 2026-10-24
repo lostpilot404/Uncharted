@@ -63,6 +63,7 @@ static HookMode hook_mode;
 static int hook_query_failed;
 static int gap_observed;
 static int temporary_write_observed;
+static int protection_hook_calls;
 static HANDLE concurrent_start_event;
 static HANDLE concurrent_ready_event;
 static HANDLE concurrent_done_event;
@@ -1174,7 +1175,9 @@ void runtime_memory_test_before_protection_restore(uintptr_t lo, uintptr_t a,
         fflush(stdout);
         return;
     }
-    SIZE_T nt = VirtualQuery((const void *)(lo + UINT64_C(0x14000)), &tracked, sizeof(tracked));
+    /* The GPU-tracked PAGE_NOACCESS page lives at a fixed fixture offset; query it absolutely
+     * so repeated carves whose span starts elsewhere are still observed against it. */
+    SIZE_T nt = VirtualQuery((const void *)(FIXTURE_BASE + UINT64_C(0x14000)), &tracked, sizeof(tracked));
     if (!nt) {
         fprintf(stderr, "FAIL: VirtualQuery(tracked page before protection restore) error %lu\n",
                 (unsigned long)GetLastError());
@@ -1184,9 +1187,15 @@ void runtime_memory_test_before_protection_restore(uintptr_t lo, uintptr_t a,
         fflush(stdout);
         return;
     }
-    temporary_write_observed = left.State == MEM_COMMIT && right.State == MEM_COMMIT &&
-                               tracked.State == MEM_COMMIT && left.Protect == PAGE_READWRITE &&
-                               right.Protect == PAGE_READWRITE && tracked.Protect == PAGE_READWRITE;
+    /* Accumulate across repeated carves: any single writable reconstruction window fails
+     * CRIT-06 protection safety; the marker must never be reset by a later clean carve.
+     * Every saved fixture protection is PAGE_READONLY or PAGE_NOACCESS, so PAGE_READWRITE
+     * on any committed queried page during reconstruction is itself the violation. */
+    if ((left.State == MEM_COMMIT && left.Protect == PAGE_READWRITE) ||
+        (right.State == MEM_COMMIT && right.Protect == PAGE_READWRITE) ||
+        (tracked.State == MEM_COMMIT && tracked.Protect == PAGE_READWRITE))
+        temporary_write_observed = 1;
+    ++protection_hook_calls;
     printf("TEMP_WRITABLE_PROTECTION=%s left_state=0x%lx left_protect=0x%lx"
            " tracked_state=0x%lx tracked_protect=0x%lx right_state=0x%lx right_protect=0x%lx"
            " original_expected=PAGE_READONLY+PAGE_NOACCESS carve=[%p,%p) parent=[%p,%p)\n",
@@ -1285,7 +1294,7 @@ static int test_gap_child(int concurrent) {
 static int test_protection_child(void) {
     printf("PHASE3: temporary protection change, independently observed\n");
     hook_mode = HOOK_PROTECTION;
-    hook_query_failed = temporary_write_observed = 0;
+    hook_query_failed = temporary_write_observed = protection_hook_calls = 0;
     if (!prepare_fixture()) {
         cleanup_fixture();
         return 10;
@@ -1298,6 +1307,32 @@ static int test_protection_child(void) {
     write_unlock();
     check(carve_rc == 0 && index == 1 && region_count == 3,
           "protection observation carve completed and region table was split");
+    /* Repeat: carve a second 64 KiB hole out of the already-rebuilt right sibling. A writable
+     * reconstruction window must not be able to hide behind a single clean carve. */
+    uintptr_t a2 = FIXTURE_BASE + UINT64_C(0x50000);
+    uintptr_t b2 = FIXTURE_BASE + UINT64_C(0x60000);
+    index = SIZE_MAX;
+    write_lock();
+    int carve2_rc = carve_host(a2, b2, &index);
+    write_unlock();
+    check(carve2_rc == 0 && region_count == 5,
+          "second carve of a rebuilt sibling completed and region table was split again");
+    check(protection_hook_calls >= 2,
+          "protection hook observed every reconstruction, not just the first");
+    check(!temporary_write_observed,
+          "no rebuilt view was ever PAGE_READWRITE during reconstruction (CRIT-06 hazard B)");
+    /* Direct PAGE_NOACCESS mapping: host_map on the first hole with PROT_NONE must commit a
+     * PAGE_NOACCESS section view straight from view_map, with no writable intermediate. */
+    if (host_map(a, b - a, PROT_NONE, 0, CARVE_START_OFF)) {
+        fprintf(stderr, "FAIL: production host_map(PROT_NONE over carved hole) returned failure\n");
+        ++failures;
+    } else {
+        MEMORY_BASIC_INFORMATION noaccess;
+        if (query_mbi(a + PAGE, &noaccess, "VirtualQuery(direct PAGE_NOACCESS view)"))
+            check(noaccess.State == MEM_COMMIT && noaccess.Type == MEM_MAPPED &&
+                  noaccess.Protect == PAGE_NOACCESS,
+                  "view_map commits a PAGE_NOACCESS section view directly");
+    }
     MEMORY_BASIC_INFORMATION left, right, tracked;
     int ql = query_mbi(FIXTURE_BASE + PAGE, &left, "VirtualQuery(left after protection restoration)");
     int qr = query_mbi(FIXTURE_BASE + FIXTURE_SIZE - PAGE, &right,
@@ -1564,21 +1599,30 @@ static int run_concurrent_test(void) {
 
 static int run_protection_test(void) {
     ChildResult result;
-    if (!run_child_success("CRIT-06 temporary protection window", "--child-protection", &result)) {
-        printf("RESULT CRIT-06.temporary_protection=TEST_INCONCLUSIVE\n");
-        return 0;
-    }
-    if (strstr(result.output, "TEMP_WRITABLE_PROTECTION=OBSERVED"))
-        printf("RESULT CRIT-06.temporary_protection=WRITABLE_PROTECTION_OBSERVED"
+    memset(&result, 0, sizeof(result));
+    int child_ok = run_child_success("CRIT-06 temporary protection window", "--child-protection", &result);
+    /* CRIT-06 hazard B is a regression gate, not characterization: a writable reconstruction
+     * window at any observed carve fails the suite (the child also exits nonzero). */
+    if (strstr(result.output, "TEMP_WRITABLE_PROTECTION=OBSERVED")) {
+        printf("RESULT CRIT-06.temporary_protection=WRITABLE_WINDOW_OBSERVED"
                " restored_after_carve=PAGE_READONLY\n");
-    else if (strstr(result.output, "TEMP_WRITABLE_PROTECTION=BEHAVIOR_NOT_OBSERVED"))
-        printf("RESULT CRIT-06.temporary_protection=BEHAVIOR_NOT_OBSERVED\n");
-    else {
-        printf("RESULT CRIT-06.temporary_protection=TEST_INCONCLUSIVE\n");
-        ++failures;
+        if (child_ok) ++failures;
         return 0;
     }
-    return 1;
+    if (!child_ok) {
+        printf("RESULT CRIT-06.temporary_protection=TEST_INCONCLUSIVE\n");
+        return 0;
+    }
+    if (strstr(result.output, "TEMP_WRITABLE_PROTECTION=BEHAVIOR_NOT_OBSERVED") &&
+        strstr(result.output, "CRIT06_TEMP_PROTECTION_RESULT=BEHAVIOR_NOT_OBSERVED")) {
+        printf("RESULT CRIT-06.temporary_protection=FIXED"
+               " (no PAGE_READWRITE reconstruction window across repeated carves;"
+               " PAGE_NOACCESS restored; direct PAGE_NOACCESS view_map verified)\n");
+        return 1;
+    }
+    printf("RESULT CRIT-06.temporary_protection=TEST_INCONCLUSIVE\n");
+    ++failures;
+    return 0;
 }
 
 static int child_entry(const char *mode) {
@@ -1631,6 +1675,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "FAIL: Windows memory tests had %d unexpected failure(s)\n", failures);
         return 1;
     }
-    printf("PASS: Windows memory CRIT-05 verification and CRIT-06 characterization completed\n");
+    printf("PASS: Windows memory CRIT-05 verification, CRIT-06 hazard-B regression gate, and"
+           " CRIT-06 hazard-A characterization completed\n");
     return 0;
 }

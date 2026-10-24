@@ -1,0 +1,20 @@
+{
+  "mission": "7.8",
+  "date_local": "2026-10-24",
+  "branch": "arena/96680190-uncharted",
+  "local_head_and_main": "3d07101d02b63f65f6026cc673e86e636d07ed59",
+  "remote_branch_and_pr9_head": "09bd5e7da2b54f8953e2edbb67a841627f8e4860",
+  "pr9_state": "OPEN, unmerged, untouched",
+  "preexisting_unstaged_git_blob_hashes": {
+    ".github/workflows/runtime.yml": "d54ad4322121eafd79554d3755368a9a9727230b",
+    "docs/gemini-audit-triage.md": "2f01829c30e4036d266e64159e4c50e558e14b83",
+    "docs/windows-memory-test-plan.md": "bf349c05a10bb5817c0b868c2e82d168ceffad82",
+    "src/runtime_memory.c": "a811e835be2eab26a0befc94d6cfda5b7c8f8909",
+    "tests/test_windows_memory.c": "64d4e7e320b4892902f3b558111691362db33f2b"
+  },
+  "preexisting_staged_files": [],
+  "prototype_source_sha256": "e5410a9dfa1b86beb4c8e4d50abe8adfb133a984524ebef50a0a57d132734eed",
+  "native_windows_executed": false,
+  "native_empirical_gate": "UNVALIDATED",
+  "upstream_inspected": "Supermedo/uncharted_pc@ac2bfbc1602623745d8b291a8ced639d6ede6369"
+}
