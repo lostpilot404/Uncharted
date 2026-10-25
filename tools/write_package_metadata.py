@@ -8,6 +8,7 @@ from pathlib import Path
 import struct
 import subprocess
 import sys
+import tempfile
 
 BASE = '31198fcf945016cc35c23931c33cb440c4895461'
 UPDATES = ['ac2bfbc1602623745d8b291a8ced639d6ede6369',
@@ -18,12 +19,15 @@ def progress(message):
     print(f'::notice title=package-metadata::{message}', flush=True)
 
 
-def command(*args):
+def command(*args, env=None):
     progress('Run: ' + ' '.join(args))
-    p = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                       timeout=60)
+    p = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                       timeout=60, env=env)
     progress(f'Exit {p.returncode}: ' + ' '.join(args))
-    return {'command': list(args), 'exit_code': p.returncode, 'output': p.stdout.strip()}
+    if p.stderr:
+        print(p.stderr, file=sys.stderr, end='', flush=True)
+    return {'command': list(args), 'exit_code': p.returncode, 'output': p.stdout.strip(),
+            'stderr': p.stderr.strip()}
 
 
 def cmake_build_info(cache_path=Path('out/gpu/CMakeCache.txt')):
@@ -42,6 +46,33 @@ def cmake_build_info(cache_path=Path('out/gpu/CMakeCache.txt')):
             'generator': entries.get('CMAKE_GENERATOR'),
             'c_compiler': entries.get('CMAKE_C_COMPILER'),
             'cxx_compiler': entries.get('CMAKE_CXX_COMPILER')}
+
+
+def patched_submodule_status(path, patches):
+    """Compare with the exact tracked build patches using a private, temporary index.
+
+    Neither the real index nor the source worktree is modified. This verifies the
+    same base+patch inputs build.sh uses, rather than allowing arbitrary dirt.
+    """
+    with tempfile.TemporaryDirectory(prefix='uncharted-source-index-') as temp:
+        env = dict(os.environ, GIT_INDEX_FILE=str(Path(temp) / 'index'))
+        def required(*args):
+            result = command('git', '-C', path, *args, env=env)
+            if result['exit_code'] != 0:
+                raise ValueError(f'could not verify expected patched source: {result}')
+            return result
+        required('read-tree', 'HEAD')
+        patch_info = []
+        for patch in patches:
+            required('apply', '--cached', str(patch.resolve()))
+            patch_info.append({'path': patch.as_posix(), 'sha256': digest(patch)})
+        tree = required('write-tree')['output']
+        verification = required('diff', '--no-ext-diff', '--exit-code',
+                                '--ignore-submodules=dirty', '--name-status', '--')
+        if verification['output']:
+            raise ValueError(f'unexpected patched worktree differences: {verification}')
+        return {'expected_patches': patch_info, 'expected_tree': tree,
+                'verification': verification}
 
 
 def source_status(submodules):
@@ -65,7 +96,14 @@ def source_status(submodules):
                 any(c not in '0123456789abcdef' for c in line[:40])):
             raise ValueError(f'uninitialized, changed or invalid submodule: {line}')
         path = line[41:].rsplit(' (', 1)[0]
-        result['submodules'].append({'path': path, 'verification': clean('-C', path)})
+        if path == 'gpu/third_party/fsr-vulkan':
+            patches = sorted(Path('gpu/patches/fsr-vulkan').glob('*.patch'))
+            if not patches:
+                raise ValueError('expected build.sh FSR patches are missing')
+            verification = patched_submodule_status(path, patches)
+        else:
+            verification = clean('-C', path)
+        result['submodules'].append({'path': path, 'verification': verification})
     return result
 
 

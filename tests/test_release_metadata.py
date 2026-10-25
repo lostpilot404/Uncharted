@@ -89,3 +89,22 @@ class ReleaseMetadataTests(unittest.TestCase):
             with mock.patch.object(metadata, 'command', return_value=clean):
                 with self.assertRaises(ValueError):
                     metadata.source_status({'exit_code': 0, 'output': output})
+
+    def test_exact_build_patch_verification_rejects_unrelated_edits(self):
+        with tempfile.TemporaryDirectory() as d:
+            patch = Path(d) / 'build.patch'
+            patch.write_text('fixture patch')
+            clean = {'exit_code': 0, 'output': '', 'stderr': ''}
+            with mock.patch.object(metadata, 'command', return_value=clean) as command:
+                result = metadata.patched_submodule_status('dependency', [patch])
+                self.assertEqual(result['expected_patches'][0]['sha256'], metadata.digest(patch))
+                calls = command.call_args_list
+                self.assertEqual(calls[0].args[3:], ('read-tree', 'HEAD'))
+                self.assertEqual(calls[1].args[3:5], ('apply', '--cached'))
+                self.assertIn('GIT_INDEX_FILE', calls[0].kwargs['env'])
+                self.assertNotIn('HEAD', calls[-1].args[3:])
+                self.assertIn('--exit-code', calls[-1].args)
+            dirty = {'exit_code': 1, 'output': 'M\tunrelated.c', 'stderr': ''}
+            with mock.patch.object(metadata, 'command', side_effect=[clean, clean, clean, dirty]):
+                with self.assertRaises(ValueError):
+                    metadata.patched_submodule_status('dependency', [patch])

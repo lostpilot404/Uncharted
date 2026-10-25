@@ -24,6 +24,12 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
+      # Checkout and MSYS2 Git must agree on source bytes; otherwise the native
+      # checkout's automatic CRLF conversion appears as source edits to MSYS2.
+      - name: Preserve source line endings before checkout
+        shell: pwsh
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
