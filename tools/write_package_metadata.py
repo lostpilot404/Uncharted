@@ -26,6 +26,24 @@ def command(*args):
     return {'command': list(args), 'exit_code': p.returncode, 'output': p.stdout.strip()}
 
 
+def cmake_build_info(cache_path=Path('out/gpu/CMakeCache.txt')):
+    """Use the CMake that actually configured the build, not another PATH executable."""
+    entries = {}
+    for line in Path(cache_path).read_text(encoding='utf-8').splitlines():
+        if line and not line.startswith(('#', '//')) and '=' in line:
+            key, value = line.split('=', 1)
+            entries[key.split(':', 1)[0]] = value
+    version = [entries.get(f'CMAKE_CACHE_{part}_VERSION', '')
+               for part in ('MAJOR', 'MINOR', 'PATCH')]
+    if not all(part.isdecimal() for part in version) or not entries.get('CMAKE_COMMAND'):
+        raise ValueError(f'missing CMake build provenance in {cache_path}')
+    return {'source': str(cache_path), 'version': '.'.join(version),
+            'executable': entries['CMAKE_COMMAND'],
+            'generator': entries.get('CMAKE_GENERATOR'),
+            'c_compiler': entries.get('CMAKE_C_COMPILER'),
+            'cxx_compiler': entries.get('CMAKE_CXX_COMPILER')}
+
+
 def digest(path):
     h = hashlib.sha256()
     with path.open('rb') as f:
@@ -74,7 +92,7 @@ def main(dest):
         'target': 'Windows AMD64', 'configuration': 'RelWithDebInfo; BB_PGO=off; BB_LTO=OFF',
         'packaging': 'PyInstaller one-directory; launcher EXE is NOT standalone',
         'run_url': f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}",
-        'toolchains': [command('clang', '--version'), command('cmake', '--version'),
+        'toolchains': [command('clang', '--version'), cmake_build_info(),
                        command('ninja', '--version'), command('pacman', '-Q'),
                        command('out/pyenv/Scripts/python.exe', '-m', 'pip', 'freeze')],
         'nvidia_sdk': command('git', '-C', 'out/dlss-sdk', 'rev-parse', 'HEAD'),

@@ -63,6 +63,7 @@ jobs:
             mingw-w64-clang-x86_64-nlohmann-json
 
       - name: Build the Windows runtime (build.sh, MSYS2 CLANG64)
+        id: runtime-build
         shell: msys2 {0}
         run: |
           git config --global --add safe.directory '*'
@@ -131,9 +132,13 @@ jobs:
           if bash packaging/windows/package.sh 2>&1 | tee out/package-logs/package.log; then
             :
           else
-            tail -40 out/package-logs/package.log | while IFS= read -r line; do
-              echo "::error title=package.sh::${line}"
-            done
+            # One escaped annotation preserves the final exception instead of exhausting
+            # GitHub's ten-error annotation limit with earlier progress messages.
+            message=$(tail -40 out/package-logs/package.log)
+            message=${message//%/%25}
+            message=${message//$'\r'/%0D}
+            message=${message//$'\n'/%0A}
+            echo "::error title=package.sh::$message"
             exit 1
           fi
 
@@ -184,7 +189,7 @@ jobs:
           retention-days: 90
 
       - name: Surface compiler failures through the checks API
-        if: failure()
+        if: ${{ failure() && steps.runtime-build.conclusion == 'failure' }}
         shell: msys2 {0}
         run: |
           if [[ -f out/gpu-build.log ]]; then

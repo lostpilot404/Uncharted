@@ -51,3 +51,20 @@ class ReleaseMetadataTests(unittest.TestCase):
             with self.assertRaises(subprocess.TimeoutExpired):
                 metadata.command('git', '--version')
             self.assertEqual(run.call_args.kwargs['timeout'], 60)
+
+    def test_cmake_provenance_uses_actual_build_cache(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / 'CMakeCache.txt'
+            p.write_text('CMAKE_CACHE_MAJOR_VERSION:INTERNAL=4\n'
+                         'CMAKE_CACHE_MINOR_VERSION:INTERNAL=2\n'
+                         'CMAKE_CACHE_PATCH_VERSION:INTERNAL=3\n'
+                         'CMAKE_COMMAND:INTERNAL=C:/actual build/bin/cmake.exe\n'
+                         'CMAKE_GENERATOR:INTERNAL=Ninja\n'
+                         'CMAKE_C_COMPILER:FILEPATH=C:/toolchain/clang.exe\n')
+            info = metadata.cmake_build_info(p)
+            self.assertEqual(info['version'], '4.2.3')
+            self.assertEqual(info['executable'], 'C:/actual build/bin/cmake.exe')
+            self.assertEqual(info['generator'], 'Ninja')
+            p.write_text('CMAKE_CACHE_MAJOR_VERSION:INTERNAL=4\n')
+            with self.assertRaises(ValueError):
+                metadata.cmake_build_info(p)
