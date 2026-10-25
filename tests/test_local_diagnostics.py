@@ -304,3 +304,11 @@ class LocalDiagnosticsTests(unittest.TestCase):
             self.assertNotIn('Alice', cleaned)
             self.assertNotIn('alice', cleaned)
             self.assertIn('line 42, in main', cleaned)
+
+    def test_compound_keys_and_complete_cookie_headers_are_redacted(self):
+        redact = diagnostics.Sanitizer()
+        for text, secret in [('SESSION_KEY="native private key"', 'native private key'),
+                             ('PS4_AES_KEY=deadbeefprivate', 'deadbeefprivate'),
+                             ('Cookie: session=onePrivate; other=twoPrivate', 'twoPrivate'),
+                             ('Authorization: Custom firstPrivate secondPrivate', 'secondPrivate')]:
+            self.assertNotIn(secret, redact(text))

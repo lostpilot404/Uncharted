@@ -80,8 +80,10 @@ class Sanitizer:
         text = re.sub(r'''(?i)\b[A-Z]:[\\/][^\r\n<>"']*''', '<path>', text)
         text = re.sub(r'''\\\\[^\r\n<>"']+''', '<path>', text)
         text = re.sub(r'''(?<![\w<])/(?!/)[^\r\n<>"']*''', '<path>', text)
+        text = re.sub(r'(?im)\b(?:authorization|cookie|set-cookie)\s*:\s*[^\r\n]+',
+                      'credential-header=<secret>', text)
         text = re.sub(r'(?i)\b(?:bearer\s+)[\w.+/=-]+', 'Bearer <secret>', text)
-        text = re.sub(r'(?i)\b([a-z0-9_-]*(?:password|passwd|token|secret|api[_-]?key|authorization|cookie)|key)\b'
+        text = re.sub(r'(?i)\b([a-z0-9_-]*(?:password|passwd|token|secret|key|authorization|cookie))\b'
                       r'(\s*[=:]\s*|\s+)(?:"[^"]*"|\x27[^\x27]*\x27|[^\s,;]+)',
                       r'\1=<secret>', text)
         text = re.sub(r'\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b', '<email>', text)
