@@ -295,3 +295,12 @@ class LocalDiagnosticsTests(unittest.TestCase):
         self.assertTrue(state['runtime']['capture_ended_with_launcher'])
         self.assertIsNone(state['runtime']['exit_code'])
         self.assertEqual(state['previous_runtime']['exit_code'], 0)
+
+    def test_redacted_tracebacks_keep_line_numbers_and_function_names(self):
+        redact = diagnostics.Sanitizer((r'C:\Users\Alice\app', '/home/alice/app'))
+        for line in ('File "C:\\Users\\Alice\\app\\launcher.py", line 42, in main',
+                     'File "/home/alice/app/launcher.py", line 42, in main'):
+            cleaned = redact(line)
+            self.assertNotIn('Alice', cleaned)
+            self.assertNotIn('alice', cleaned)
+            self.assertIn('line 42, in main', cleaned)

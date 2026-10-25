@@ -64,6 +64,10 @@ class Sanitizer:
 
     def __call__(self, text):
         text = str(text)
+        # Remove quoted paths before substituting known prefixes so traceback
+        # line numbers/function names outside the quotes remain readable.
+        text = re.sub(r'''["'][A-Za-z]:[\\/][^\r\n]*?["']''', '<path>', text)
+        text = re.sub(r'''["']/[^\r\n]*?["']''', '<path>', text)
         for value in sorted(self.values, key=len, reverse=True):
             for spelling in {value, value.replace('\\', '/'), value.replace('/', '\\')}:
                 pattern = re.escape(spelling)
@@ -73,11 +77,9 @@ class Sanitizer:
         text = re.sub(r'(?i)\b(?:https?|ftp|file)://[^\s<>]+', '<url>', text)
         # Quoted and unquoted absolute paths, including spaces. Over-redact rather than
         # leave the tail of a username/library path behind.
-        text = re.sub(r'''["'][A-Za-z]:[\\/][^\r\n]*?["']''', '<path>', text)
-        text = re.sub(r'''["']/[^\r\n]*?["']''', '<path>', text)
-        text = re.sub(r'(?i)\b[A-Z]:[\\/][^\r\n<>]*', '<path>', text)
-        text = re.sub(r'\\\\[^\r\n<>]+', '<path>', text)
-        text = re.sub(r'(?<![\w<])/(?!/)[^\r\n<>]*', '<path>', text)
+        text = re.sub(r'''(?i)\b[A-Z]:[\\/][^\r\n<>"']*''', '<path>', text)
+        text = re.sub(r'''\\\\[^\r\n<>"']+''', '<path>', text)
+        text = re.sub(r'''(?<![\w<])/(?!/)[^\r\n<>"']*''', '<path>', text)
         text = re.sub(r'(?i)\b(?:bearer\s+)[\w.+/=-]+', 'Bearer <secret>', text)
         text = re.sub(r'(?i)\b([a-z0-9_-]*(?:password|passwd|token|secret|api[_-]?key|authorization|cookie)|key)\b'
                       r'(\s*[=:]\s*|\s+)(?:"[^"]*"|\x27[^\x27]*\x27|[^\s,;]+)',
