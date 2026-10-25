@@ -68,3 +68,17 @@ class ReleaseMetadataTests(unittest.TestCase):
             p.write_text('CMAKE_CACHE_MAJOR_VERSION:INTERNAL=4\n')
             with self.assertRaises(ValueError):
                 metadata.cmake_build_info(p)
+
+    def test_source_status_keeps_tracked_changes_fatal(self):
+        with mock.patch.object(metadata, 'command',
+                               return_value={'exit_code': 0, 'output': ''}) as command:
+            self.assertIn('scope', metadata.source_status())
+            args = command.call_args.args
+            self.assertIn('--untracked-files=no', args)
+            self.assertIn('--ignore-submodules=untracked', args)
+            self.assertIn('core.fsmonitor=false', args)
+        for result in ({'exit_code': 1, 'output': ''},
+                       {'exit_code': 0, 'output': ' M src/runtime_memory.c'}):
+            with mock.patch.object(metadata, 'command', return_value=result):
+                with self.assertRaises(ValueError):
+                    metadata.source_status()

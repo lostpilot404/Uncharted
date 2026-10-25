@@ -44,6 +44,18 @@ def cmake_build_info(cache_path=Path('out/gpu/CMakeCache.txt')):
             'cxx_compiler': entries.get('CMAKE_CXX_COMPILER')}
 
 
+def source_status():
+    # The runner starts from a clean checkout; generated untracked build products
+    # must not trigger recursive scans through dependency trees. Keep tracked
+    # modifications and submodule HEAD/tracked modifications visible and fatal.
+    status = command('git', '-c', 'core.fsmonitor=false', 'status', '--porcelain=v1',
+                     '--untracked-files=no', '--ignore-submodules=untracked')
+    if status['exit_code'] != 0 or status['output']:
+        raise ValueError(f'tracked source is dirty or could not be verified: {status}')
+    status['scope'] = 'Tracked files and submodule source state; untracked build products excluded'
+    return status
+
+
 def digest(path):
     h = hashlib.sha256()
     with path.open('rb') as f:
@@ -89,6 +101,9 @@ def main(dest):
     result = {
         'source_sha': sha, 'base_sha': BASE, 'upstream_release_commits': UPDATES,
         'build_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        'msvc_environment': {key: os.environ.get(key) for key in (
+            'VCToolsVersion', 'VisualStudioVersion', 'VSCMD_VER',
+            'VSCMD_ARG_TGT_ARCH', 'WindowsSDKVersion', 'WindowsSdkDir')},
         'target': 'Windows AMD64', 'configuration': 'RelWithDebInfo; BB_PGO=off; BB_LTO=OFF',
         'packaging': 'PyInstaller one-directory; launcher EXE is NOT standalone',
         'run_url': f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}",
@@ -97,7 +112,7 @@ def main(dest):
                        command('out/pyenv/Scripts/python.exe', '-m', 'pip', 'freeze')],
         'nvidia_sdk': command('git', '-C', 'out/dlss-sdk', 'rev-parse', 'HEAD'),
         'submodules': command('git', 'submodule', 'status', '--recursive'),
-        'source_status_after_build': command('git', 'status', '--porcelain=v1'),
+        'source_status_after_build': source_status(),
         'validation': {'manual_gameplay': 'NOT_PERFORMED',
                        'gameplay': 'BLOCKED: proprietary game dump and compatible GPU not supplied',
                        'native_gui_launch': 'See separate native-launch-results.json artifact',
