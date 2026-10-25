@@ -27,6 +27,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: msys2/setup-msys2@v2
         id: msys2
@@ -64,13 +66,15 @@ jobs:
         shell: msys2 {0}
         run: |
           git config --global --add safe.directory '*'
+          mkdir -p out/package-logs
           if ! out=$(bash build.sh 2>&1); then
             printf '%s\n' "$out" | tail -40 | while IFS= read -r line; do
               echo "::error title=build.sh::${line}"
             done
             exit 1
           fi
-          printf '%s\n' "$out" | tail -5
+          printf '%s\n' "$out" | tee out/package-logs/build.log
+          ninja -C out/gpu -t commands > out/package-logs/build-commands.log
 
       - uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -104,6 +108,10 @@ jobs:
             test -f "$file" || { echo "::error title=dlss::missing $file"; exit 1; }
           done
 
+      - name: Fetch the pinned optional XeSS runtime
+        shell: msys2 {0}
+        run: bash packaging/windows/fetch_xess.sh
+
       - uses: actions/setup-python@v5
         id: py
         with:
@@ -124,7 +132,7 @@ jobs:
             done
             exit 1
           fi
-          printf '%s\n' "$out" | tail -6
+          printf '%s\n' "$out" | tee out/package-logs/package.log
 
       - name: Verify the package contents and checksum
         shell: msys2 {0}
@@ -141,11 +149,43 @@ jobs:
           echo "::notice title=package-size::$(stat -c %s "$zip") bytes"
           echo "::notice title=package-commit::$(git rev-parse HEAD)"
 
-      - uses: actions/upload-artifact@v4
+      - name: Native clean-extraction application launch (not gameplay)
+        shell: pwsh
+        run: ./tools/smoke_windows_package.ps1
+
+      - name: Publish the built package even if runtime validation fails
+        if: ${{ always() && hashFiles('dist/uncharted-windows.zip') != '' }}
+        uses: actions/upload-artifact@v4
         with:
           name: uncharted-windows-package
           path: |
             dist/uncharted-windows.zip
             dist/uncharted-windows.zip.sha256
+            dist/uncharted-windows/BUILD-METADATA.json
+            dist/uncharted-windows/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 90
+
+      - name: Preserve build and launch evidence (including failed runs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-package-evidence
+          path: |
+            out/package-logs/
+            out/gpu-build.log
+            out/gpu/CMakeCache.txt
+            out/package-launch/native-launch-results.json
+            out/package-launch/*.log
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Surface compiler failures through the checks API
+        if: failure()
+        shell: msys2 {0}
+        run: |
+          if [[ -f out/gpu-build.log ]]; then
+            grep -E 'error:|undefined reference' out/gpu-build.log | head -8 | cut -c1-350 | while IFS= read -r line; do
+              echo "::error title=package-compile::$line"
+            done
+          fi

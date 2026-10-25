@@ -110,6 +110,8 @@ for package in protobuf abseil-cpp openssl miniupnpc zlib; do
     done
 done
 find "$dest" -name __pycache__ -prune -exec rm -r {} +
+# Provenance and per-file hashes travel inside the portable package.
+out/pyenv/Scripts/python.exe tools/write_package_metadata.py "$dest"
 mkdir -p dist
 rm -f dist/uncharted-windows.zip
 # Not Compress-Archive, which writes backslashes that Linux tools keep in the file names (#246).

@@ -79,3 +79,24 @@ Known problems
   shadPS4). Not fixed yet.
 
 Port by SuperMedo.
+
+Mission 7.14 review-candidate notes
+- Extract the entire ZIP to a new, writable folder. Uncharted.exe is the real launcher,
+  NOT a standalone executable: keep _internal, bin, scripts, launcher and licenses beside it.
+- Install the Microsoft Visual C++ 2015-2022 Redistributable (x64), particularly for XeSS,
+  and a current GPU driver. FSR 4 requires separately supplied assets; use Off/TAA/FSR 3.1
+  if they are absent. No game dump is included or downloadable from this package.
+- BUILD-METADATA.json identifies the exact source, upstream commits, tools and file hashes.
+  SHA256SUMS.txt covers the package files. CI launch evidence is a separate artifact.
+- This is a draft integration candidate, not a production-safety certification. CRIT-06
+  sibling unmap gaps, intentional invalidation, stale async pointers and mixed-protection
+  widening remain unresolved. The placeholder-leaf experiment is NOT used by this runtime.
+- Upstream localization coverage is incomplete; untranslated text falls back to English.
+- Disable 'Look for a new version' on Advanced before testing. Do not install an upstream
+  auto-update over this review build: it would replace the fork's unmerged work.
+- Test with a COPY of your saves. Start at 1080p, 60 FPS, AA and frame generation off.
+  Choose the Game folder, verify each available title, open Display/Controls, save settings,
+  then PLAY. Record cutscene/menu/gameplay behavior, controller input and clean shutdown.
+  GPU and gameplay checks require your decrypted game data and cannot be established by CI.
+- If launch fails, preserve user\last_run.log, the Log page output, BUILD-METADATA.json and
+  the exact ZIP checksum. Missing DLL errors can indicate incomplete extraction or drivers.
