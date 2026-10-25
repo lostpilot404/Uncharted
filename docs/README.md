@@ -4,6 +4,7 @@ Current, maintained documentation:
 
 | Document | Purpose |
 |---|---|
+| [launcher-settings.md](launcher-settings.md) | Persisted settings map, defaults, load/validation/save and migration policy. |
 | [local-diagnostics.md](local-diagnostics.md) | What is logged, what is exported, bounds, privacy and validation. |
 | [dlss-sr.md](dlss-sr.md), [upscaler.md](upscaler.md) | Temporal reconstruction, presets and frame generation. |
 | [resolution.md](resolution.md), [parallel_gpu.md](parallel_gpu.md), [motion_vectors.md](motion_vectors.md) | Render size, speaker layout, GPU threading and motion-vector design notes. |
