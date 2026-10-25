@@ -30,6 +30,7 @@ jobs:
             mingw-w64-clang-x86_64-ninja
             mingw-w64-clang-x86_64-pkgconf
             mingw-w64-clang-x86_64-python
+            mingw-w64-clang-x86_64-python-pillow
             mingw-w64-clang-x86_64-vulkan-headers
             mingw-w64-clang-x86_64-vulkan-loader
             mingw-w64-clang-x86_64-vulkan-memory-allocator
