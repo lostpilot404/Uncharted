@@ -26,9 +26,11 @@ code runs directly on your PC and the graphics are translated to Vulkan. Unpack 
 - Stereo, 5.1 or 7.1 sound: the games are told the real speaker layout (it follows the Windows setting, or pick it in the launcher).
 - Trophies: the games' own trophy lists in the launcher, and a notice in the game when you earn one.
 - Button prompts for keyboard and mouse, Xbox or PlayStation controllers; controller vibration settings.
-- Cheats page (infinite health and ammo per game), launcher languages, your own covers and Steam art.
-- A Fixes page for fixes that cost speed: Automatic turns each one on only where it helps.
-- Add to Steam and desktop shortcuts from the launcher, automatic updates.
+- Cheats (infinite health and ammo per game), launcher languages and Steam artwork.
+- Fixes that cost speed are Automatic by default: each one runs only where it helps.
+- Add to Steam and desktop shortcuts, automatic updates.
+- Local diagnostics: persistent logs, a privacy review before export, and a bounded ZIP you
+  inspect yourself. Nothing is uploaded; see [docs/local-diagnostics.md](docs/local-diagnostics.md).
 
 ## Requirements
 
@@ -45,7 +47,8 @@ code runs directly on your PC and the graphics are translated to Vulkan. Unpack 
 - **Uncharted 3, Cartagena square (chapter 2):** at high frame rates (240 Hz setting, ~80 FPS)
   the game could freeze and close with "GPU crash: the graphics device was lost". It came from
   the speed fix for that area and is fixed in 0.3. If it still happens to you, set Frame rate to
-  60 on the Display page and open an issue with your `user\last_run.log`.
+  60 in Settings → Display and attach the diagnostics ZIP (Settings → Support → Export
+  diagnostics) or `user\last_run.log` to an issue.
 - **Uncharted 3:** green or black shapes flashing on Sully's shirt in Cartagena: the cloth
   solvers raced on NVIDIA's 32-lane groups. Fixed in 0.3.9 with BilalReloaded's fix.
 - **Crash with "ASSERTION: GetRenderFrameParams(frameToFreeInstancesFor)->m_gfxEopTick"**
@@ -72,6 +75,26 @@ code runs directly on your PC and the graphics are translated to Vulkan. Unpack 
 
 MSYS2 CLANG64 on Windows: `bash build.sh` builds `out\bb-probe.exe`, and
 `bash packaging/windows/package.sh` makes `dist\uncharted-windows` and the zip.
+`bash build.sh --test` runs the native standalone tests; `python -m unittest discover -s tests`
+runs the Python suite, including the strict launcher localization checks.
+
+## Launcher
+
+`Uncharted.exe` has two destinations:
+
+- **Play** (default) shows the selected game, the folder it will run from and whether the files
+  are there, then one **PLAY** action. Missing-file guidance points at the folder to set.
+- **Settings** holds every supported option, grouped into Game, Display, Graphics, Audio,
+  Controls, Fixes, Cheats and Advanced. **Save settings** (or closing the launcher) writes
+  `%APPDATA%\uncharted-launcher\settings.json`. Older files are read without migration:
+  unknown keys are kept and invalid values are repaired and reported.
+
+**Settings → Support** keeps the live runtime log, a sanitized **Copy**, **Open logs folder**,
+**Report a problem** and **Export diagnostics** away from the launch flow. The export previews
+the exact files, sizes and hashes before anything is written. Trophies, Steam and desktop
+shortcuts are secondary actions in Settings; custom collection artwork is in
+Settings → Advanced. There is no telemetry, automatic upload, account, advertising or unrelated
+feature. See the [documentation index](docs/README.md).
 
 ## Credits
 

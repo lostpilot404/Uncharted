@@ -1084,8 +1084,9 @@ class Launcher:
             label, command = action
             self.save_note = tk.Label(head, text='', bg=SURFACE, fg=GOLD, font=self.font_ui_sm)
             self.save_note.pack(side='right', padx=(0, 14))
-            self.pill(head, label, command, kind='primary', background=SURFACE,
-                      padding=(18, 7)).pack(side='right')
+            self.save_button = self.pill(head, label, command, kind='primary', background=SURFACE,
+                                         padding=(18, 7))
+            self.save_button.pack(side='right')
         body = tk.Frame(shell, bg=SURFACE)
         body.pack(fill='both', expand=True)
         canvas = tk.Canvas(body, bg=SURFACE, highlightthickness=0, bd=0)
@@ -1658,6 +1659,19 @@ class Launcher:
         self.pill(holder, _('Desktop shortcut'), self.shortcut).pack(side='left', padx=(8, 0))
         self.note(f, _('Compiled shaders are kept so the game does not stutter again. Clear the cache only '
                        'when the picture is broken after an update.'), top=10)
+        self.subsection(f, _('Collection image'))
+        art = self.tk.Frame(self.target(f), bg=CARD)
+        art.grid(row=self.next_row(self.target(f)), column=0, columnspan=2, sticky='w', pady=(8, 0))
+        self.art_actions = {
+            'banner': lambda: self.edit_launcher_art(
+                'art_banner', _('Collection banner'), (1600, 450), 'banner')}
+        self.pill(art, _('Collection banner'), self.art_actions['banner'],
+                  padding=(12, 6)).pack(side='left', padx=(0, 6))
+        for key, title, _sub, _exe in GAMES:
+            self.art_actions[key] = (lambda k=key: self.edit_launcher_art(
+                f'art_{k}', _('Change image'), (600, 900), k))
+            self.pill(art, _(title), self.art_actions[key],
+                      padding=(12, 6)).pack(side='left', padx=(0, 6))
 
     # ---- trophies (secondary action, not a destination) ---------------------------------------
     def open_trophies(self):
@@ -1963,6 +1977,15 @@ class Launcher:
         if self.process:
             self.play_button.configure(state='disabled')
             self.stop_button.configure(state='normal')
+
+    def edit_launcher_art(self, key, title, size, crop_key):
+        """Choose and crop one local image; the original file is never copied into the port."""
+        result = self.edit_art(key, title, size, crop_key)
+        if not result:
+            return
+        self.app[key], self.app.setdefault('art_crops', {})[crop_key] = result
+        self.configure_art()
+        self.collect()
 
     def configure_art(self):
         import uncharted_art

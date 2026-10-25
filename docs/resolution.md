@@ -1,7 +1,7 @@
 # Render resolution and ultrawide
 
 How the port renders above 1080p, how the games' size and aspect ratio are changed, and how
-the speaker layout reaches the games. The launcher's Display page sets all of it; the
+the speaker layout reaches the games. The launcher's Settings → Display section sets all of it; the
 variables below are what it passes to the game.
 
 ## Render resolution (`BB_GAME_RES=WxH`)

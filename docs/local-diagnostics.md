@@ -2,7 +2,7 @@
 
 ## Using it
 
-On the launcher's **Log** page:
+In the launcher's **Settings → Support** section:
 
 - **Export diagnostics** prepares a bounded, sanitized **snapshot**. Select each file in
   the preview to inspect it (visible horizontal and vertical scrollbars), then **Save ZIP**

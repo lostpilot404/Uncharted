@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Translations of the Windows launcher. KEYS holds the English texts; every language lists its
-texts in the same order. Russian lives next to the English text in bbport_launcher_win.py.
+texts in the same order. These are the legacy base tables; uncharted_i18n.py extends them.
 Missing or empty entries fall back to English."""
 
 KEYS = [

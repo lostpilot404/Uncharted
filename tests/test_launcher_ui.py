@@ -110,6 +110,23 @@ class LauncherUITests(unittest.TestCase):
         self.assertEqual(window.stop_button.command, window.stop)
         self.assertEqual(window.stop_button.options.get('state'), 'disabled')
 
+    def test_settings_has_one_explicit_save_action(self):
+        window = self.window()
+        self.assertEqual(window.save_button.command, window.save_settings)
+        self.assertEqual(window.save_note.options['text'], '')  # header feedback, not a dialog
+
+    def test_custom_artwork_is_still_configurable_from_settings(self):
+        window = self.window()
+        self.assertEqual(set(window.art_actions), {'banner', 'u1', 'u2', 'u3'})
+        with mock.patch.object(window, 'edit_art', return_value=('C:/art/cover.png', {'zoom': 1.2})), \
+                mock.patch.object(window, 'configure_art') as configure:
+            window.art_actions['u1']()
+        self.assertEqual(window.app['art_u1'], 'C:/art/cover.png')
+        self.assertEqual(window.app['art_crops']['u1'], {'zoom': 1.2})
+        self.assertEqual(json.loads(self.config.read_text(encoding='utf-8-sig'))['art_u1'],
+                         'C:/art/cover.png')
+        configure.assert_called_once_with()
+
     def test_support_actions_are_inside_settings_not_play(self):
         window = self.window()
         self.assertEqual(set(window.support_actions), {'export', 'logs', 'report', 'copy'})

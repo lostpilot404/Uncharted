@@ -3,7 +3,7 @@
  * run.py has scripts/trophies.py leave the texts and icons of the running game's set in
  * <out>/trophy/ (trophies.txt, TROPxxx.PNG); probe.c gives that folder to runtime_trophy_configure.
  * Unlocks are kept in <user>/trophy/<NP communication id>.log, one "id unix-time" per line, which
- * the launcher's Trophies page reads too. An unlock shows the game's trophy notice (the overlay in
+ * the launcher's trophy window reads too. An unlock shows the game's trophy notice (the overlay in
  * bbgpu) and earns the platinum when it was the last of the others. Without the cache (a dump
  * without sce_sys/trophy, or a probe started by hand) every call is accepted and only logged. */
 #define _GNU_SOURCE

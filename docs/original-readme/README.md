@@ -1,3 +1,7 @@
+> **Archived upstream English README.** This is a snapshot of the original
+> project, kept for provenance. Paths, features and links below describe that
+> project, not the current Uncharted build; see the repository root README.
+
 THIS PROJECT IS NOT RELATED TO SHADPS4. ALL QUESTIONS RELATED TO THIS PROJECT SHOULD BE SENT TO THE DISCORD SERVER https://discord.gg/KYZRKk9CB, NOT TO THE SHADPS4 SERVER.
 
 
