@@ -371,8 +371,92 @@ TRANSLATIONS = {
     },
 }
 
+# Strings introduced by the two-destination (Play | Settings) layout. They live here rather
+# than in the shared bbport_lang table because that table belongs to the legacy Bloodborne UI.
+LAYOUT_TRANSLATIONS = {
+    'es': {
+        'Settings': 'Ajustes',
+        'Save settings': 'Guardar ajustes',
+        'Settings saved.': 'Ajustes guardados.',
+        'Invalid value for {}.': 'Valor no válido para {}.',
+        'Environment variables must use NAME=value.':
+            'Las variables de entorno deben usar NOMBRE=valor.',
+        'Support': 'Soporte',
+        'Set the game folder in Settings.': 'Elige la carpeta del juego en Ajustes.',
+        'see the log in Settings': 'consulta el registro en Ajustes',
+        'No trophy list for this game. Set the game folder in Settings.':
+            'No hay lista de trofeos para este juego. Elige la carpeta del juego en Ajustes.',
+    },
+    'pt': {
+        'Settings': 'Configurações',
+        'Save settings': 'Guardar configurações',
+        'Settings saved.': 'Configurações guardadas.',
+        'Invalid value for {}.': 'Valor inválido para {}.',
+        'Environment variables must use NAME=value.':
+            'As variáveis de ambiente devem usar NOME=valor.',
+        'Support': 'Suporte',
+        'Set the game folder in Settings.': 'Escolha a pasta do jogo nas Configurações.',
+        'see the log in Settings': 'consulte o registo nas Configurações',
+        'No trophy list for this game. Set the game folder in Settings.':
+            'Não há lista de troféus para este jogo. Escolha a pasta do jogo nas Configurações.',
+    },
+    'fr': {
+        'Settings': 'Paramètres',
+        'Save settings': 'Enregistrer les paramètres',
+        'Settings saved.': 'Paramètres enregistrés.',
+        'Invalid value for {}.': 'Valeur non valide pour {}.',
+        'Environment variables must use NAME=value.':
+            'Les variables d’environnement doivent utiliser NOM=valeur.',
+        'Support': 'Assistance',
+        'Set the game folder in Settings.': 'Choisissez le dossier du jeu dans Paramètres.',
+        'see the log in Settings': 'consultez le journal dans Paramètres',
+        'No trophy list for this game. Set the game folder in Settings.':
+            'Aucune liste de trophées pour ce jeu. Choisissez le dossier du jeu dans Paramètres.',
+    },
+    'de': {
+        'Settings': 'Einstellungen',
+        'Save settings': 'Einstellungen speichern',
+        'Settings saved.': 'Einstellungen gespeichert.',
+        'Invalid value for {}.': 'Ungültiger Wert für {}.',
+        'Environment variables must use NAME=value.':
+            'Umgebungsvariablen müssen NAME=Wert verwenden.',
+        'Support': 'Hilfe und Support',
+        'Set the game folder in Settings.': 'Wähle den Spielordner in den Einstellungen.',
+        'see the log in Settings': 'siehe das Protokoll in den Einstellungen',
+        'No trophy list for this game. Set the game folder in Settings.':
+            'Keine Trophäenliste für dieses Spiel. Wähle den Spielordner in den Einstellungen.',
+    },
+    'it': {
+        'Settings': 'Impostazioni',
+        'Save settings': 'Salva impostazioni',
+        'Settings saved.': 'Impostazioni salvate.',
+        'Invalid value for {}.': 'Valore non valido per {}.',
+        'Environment variables must use NAME=value.':
+            'Le variabili d’ambiente devono usare NOME=valore.',
+        'Support': 'Supporto',
+        'Set the game folder in Settings.': 'Scegli la cartella del gioco in Impostazioni.',
+        'see the log in Settings': 'consulta il registro in Impostazioni',
+        'No trophy list for this game. Set the game folder in Settings.':
+            'Nessun elenco di trofei per questo gioco. Scegli la cartella del gioco in Impostazioni.',
+    },
+    'ja': {
+        'Settings': '設定',
+        'Save settings': '設定を保存',
+        'Settings saved.': '設定を保存しました。',
+        'Invalid value for {}.': '{} の値が無効です。',
+        'Environment variables must use NAME=value.':
+            '環境変数は 名前=値 の形式で指定してください。',
+        'Support': 'サポート',
+        'Set the game folder in Settings.': '設定でゲームフォルダーを指定してください。',
+        'see the log in Settings': '設定のログを確認してください',
+        'No trophy list for this game. Set the game folder in Settings.':
+            'このゲームのトロフィーリストがありません。設定でゲームフォルダーを指定してください。',
+    },
+}
+
 for _code, _translations in EXTRA_TRANSLATIONS.items():
-    TRANSLATIONS[_code] = {**shared_translations(_code), **TRANSLATIONS.get(_code, {}), **_translations}
+    TRANSLATIONS[_code] = {**shared_translations(_code), **TRANSLATIONS.get(_code, {}), **_translations,
+                           **LAYOUT_TRANSLATIONS.get(_code, {})}
 
 
 def translate(language, text):
