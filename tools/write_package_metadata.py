@@ -44,16 +44,29 @@ def cmake_build_info(cache_path=Path('out/gpu/CMakeCache.txt')):
             'cxx_compiler': entries.get('CMAKE_CXX_COMPILER')}
 
 
-def source_status():
-    # The runner starts from a clean checkout; generated untracked build products
-    # must not trigger recursive scans through dependency trees. Keep tracked
-    # modifications and submodule HEAD/tracked modifications visible and fatal.
-    status = command('git', '-c', 'core.fsmonitor=false', 'status', '--porcelain=v1',
-                     '--untracked-files=no', '--ignore-submodules=untracked')
-    if status['exit_code'] != 0 or status['output']:
-        raise ValueError(f'tracked source is dirty or could not be verified: {status}')
-    status['scope'] = 'Tracked files and submodule source state; untracked build products excluded'
-    return status
+def source_status(submodules):
+    # Avoid recursive `git status` (observed hanging on the native runner).
+    # `dirty` skips each submodule's worktree scan, NOT its recorded HEAD; check
+    # every submodule's tracked worktree explicitly in a separate bounded call.
+    flags = ('diff', '--no-ext-diff', '--exit-code', '--ignore-submodules=dirty',
+             '--name-status', 'HEAD', '--')
+    def clean(*prefix):
+        result = command('git', *prefix, *flags)
+        if result['exit_code'] != 0 or result['output']:
+            raise ValueError(f'tracked source is dirty or could not be verified: {result}')
+        return result
+    result = {'root': clean(), 'submodules': [],
+              'scope': 'Tracked files and recursive submodule HEAD/worktree changes; untracked build products excluded'}
+    if submodules['exit_code'] != 0:
+        raise ValueError('could not enumerate submodule source state')
+    for line in submodules['output'].splitlines():
+        line = line.lstrip()
+        if (len(line) < 42 or line[40] != ' ' or
+                any(c not in '0123456789abcdef' for c in line[:40])):
+            raise ValueError(f'uninitialized, changed or invalid submodule: {line}')
+        path = line[41:].rsplit(' (', 1)[0]
+        result['submodules'].append({'path': path, 'verification': clean('-C', path)})
+    return result
 
 
 def digest(path):
@@ -98,6 +111,7 @@ def main(dest):
             if len(files) % 50 == 0:
                 progress(f'Hashed {len(files)} files; latest: {item["path"]}')
     progress(f'File validation complete: {len(files)} files')
+    submodules = command('git', 'submodule', 'status', '--recursive')
     result = {
         'source_sha': sha, 'base_sha': BASE, 'upstream_release_commits': UPDATES,
         'build_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -111,8 +125,8 @@ def main(dest):
                        command('ninja', '--version'), command('pacman', '-Q'),
                        command('out/pyenv/Scripts/python.exe', '-m', 'pip', 'freeze')],
         'nvidia_sdk': command('git', '-C', 'out/dlss-sdk', 'rev-parse', 'HEAD'),
-        'submodules': command('git', 'submodule', 'status', '--recursive'),
-        'source_status_after_build': source_status(),
+        'submodules': submodules,
+        'source_status_after_build': source_status(submodules),
         'validation': {'manual_gameplay': 'NOT_PERFORMED',
                        'gameplay': 'BLOCKED: proprietary game dump and compatible GPU not supplied',
                        'native_gui_launch': 'See separate native-launch-results.json artifact',

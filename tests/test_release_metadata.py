@@ -70,15 +70,22 @@ class ReleaseMetadataTests(unittest.TestCase):
                 metadata.cmake_build_info(p)
 
     def test_source_status_keeps_tracked_changes_fatal(self):
-        with mock.patch.object(metadata, 'command',
-                               return_value={'exit_code': 0, 'output': ''}) as command:
-            self.assertIn('scope', metadata.source_status())
-            args = command.call_args.args
-            self.assertIn('--untracked-files=no', args)
-            self.assertIn('--ignore-submodules=untracked', args)
-            self.assertIn('core.fsmonitor=false', args)
-        for result in ({'exit_code': 1, 'output': ''},
-                       {'exit_code': 0, 'output': ' M src/runtime_memory.c'}):
-            with mock.patch.object(metadata, 'command', return_value=result):
+        submodules = {'exit_code': 0, 'output': 'a' * 40 + ' gpu/dependency (v1)'}
+        clean = {'exit_code': 0, 'output': ''}
+        dirty = {'exit_code': 1, 'output': 'M\tsrc/runtime_memory.c'}
+        with mock.patch.object(metadata, 'command', return_value=clean) as command:
+            result = metadata.source_status(submodules)
+            self.assertEqual(result['submodules'][0]['path'], 'gpu/dependency')
+            self.assertEqual(command.call_count, 2)
+            self.assertIn('--ignore-submodules=dirty', command.call_args_list[0].args)
+            self.assertIn('--exit-code', command.call_args_list[0].args)
+            self.assertEqual(command.call_args_list[1].args[:3], ('git', '-C', 'gpu/dependency'))
+        for results in ([dirty], [clean, dirty]):
+            with mock.patch.object(metadata, 'command', side_effect=results):
                 with self.assertRaises(ValueError):
-                    metadata.source_status()
+                    metadata.source_status(submodules)
+        for output in ('-' + 'a' * 40 + ' gpu/dependency',
+                       '+' + 'a' * 40 + ' gpu/dependency'):
+            with mock.patch.object(metadata, 'command', return_value=clean):
+                with self.assertRaises(ValueError):
+                    metadata.source_status({'exit_code': 0, 'output': output})
