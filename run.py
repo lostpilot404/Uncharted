@@ -167,7 +167,7 @@ def main():
     data = Path(env.get('BB_DATA_DIR', PORT))
     out_root = data / 'out'
     env.setdefault('BB_CONFIG', str(data / 'bbport.ini'))
-    # Keyboard, mouse and controller bindings (the launcher's Controls page).
+    # Keyboard, mouse and controller bindings (the launcher's Settings → Controls section).
     env.setdefault('BB_INPUT_CONFIG', str(data / 'input.ini'))
     # The collection's renderer (all three games): the camera velocity pass of the motion blur
     # (its constants give the motion vectors), the compute pass after the scene is lit, before

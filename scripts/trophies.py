@@ -8,7 +8,7 @@ texts as ESFM files, which are AES-128-CBC encrypted. The key of a set comes fro
 trophy key and the set's NP communication id (NPWRxxxxx_00), the same way shadPS4 reads them.
 
 run.py calls this before a game starts and the runtime (src/runtime_trophy.c) reads what it
-leaves in <out>/trophy/: trophies.txt and the icons. The launcher's Trophies page reads the same
+leaves in <out>/trophy/: trophies.txt and the icons. The launcher's trophy window reads the same
 files. Unlocks are kept in <saves folder>/trophy/<NPWR id>.log, one "id unix-time" per line.
 
     python trophies.py <game folder> --out <dir> --exe u1|u2|u3 [--lang 1] [--own]

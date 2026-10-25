@@ -101,7 +101,7 @@ Still in the launcher: keys whose Tk keysym is not a plain letter or digit (AZER
 | Variable | Effect |
 |---|---|
 | `BB_BUTTON_PROMPTS=0` | keep the PlayStation buttons (also `off`, `playstation`) |
-| `BB_BUTTON_PROMPTS=keyboard` / `xbox` | always show that style (default `auto`: the device used last); the launcher's Controls page has the same choice |
+| `BB_BUTTON_PROMPTS=keyboard` / `xbox` | always show that style (default `auto`: the device used last); the launcher's Settings → Controls section has the same choice |
 | `BB_BUTTON_PROMPTS_FILE=<path>` | the first word of that file (`ps`, `xbox`, `keyboard`) is the device used last, read twice a second: switching in runs without a controller (scripted runs ignore the real one) |
 | `BB_ICON_COLLECT=1` | save every picture sampled by a pass that draws to the display to `user/button_icons/<hash>_<w>x<h>_<format>.dds` (uncompressed slots at most 4 times: a sheet can be empty at first) |
 | `BB_TEXTURE_DUMP=1` | F10 saves every texture of the next frame and the pass list to `user/texture_dump/<time>/` |

@@ -4,7 +4,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Diagnostics are local only. Use Log → Export diagnostics, inspect EVERY file, and share only what you agree to make public.
+        Diagnostics are local only. Use Settings → Support → Export diagnostics, inspect EVERY file, and share only what you agree to make public.
         Never attach saves, decrypted games, keys, full settings or native memory dumps. Sanitization is best effort.
         A final log error is evidence, not proof of the cause. Keep CRIT-06 memory safety separate from diagnostics improvements.
   - type: textarea

@@ -41,6 +41,30 @@ class LauncherTranslationTests(unittest.TestCase):
         text = 'This changes only the launcher. The game language is selected on the Game page.'
         self.assertNotEqual(uncharted_i18n.translate('es', text), text)
 
+    def test_two_destination_layout_strings_have_real_translations(self):
+        """New Play | Settings labels are translated, not English fallbacks or format breaks."""
+        import collections
+        import string
+
+        def fields(text):
+            return collections.Counter((field, spec, conversion)
+                                       for _, field, spec, conversion in string.Formatter().parse(text)
+                                       if field is not None)
+
+        languages = ('es', 'pt', 'fr', 'de', 'it', 'ja')
+        expected = set(uncharted_i18n.LAYOUT_TRANSLATIONS['es'])
+        self.assertIn('Settings', expected)
+        self.assertIn('Save settings', expected)
+        for language in languages:
+            with self.subTest(language=language):
+                table = uncharted_i18n.LAYOUT_TRANSLATIONS[language]
+                self.assertEqual(set(table), expected)
+                for text, translation in table.items():
+                    with self.subTest(text=text):
+                        self.assertNotEqual(translation, text)
+                        self.assertEqual(fields(text), fields(translation))
+                        self.assertEqual(uncharted_i18n.translate(language, text), translation)
+
     def test_each_translation_covers_every_launcher_text(self):
         tree = ast.parse((ROOT / 'launcher' / 'uncharted_launcher.py').read_text(encoding='utf-8'))
         texts = {node.args[0].value for node in ast.walk(tree)

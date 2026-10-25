@@ -1,7 +1,7 @@
-# bbport on Windows
+# Uncharted on Windows — build notes
 
 The port builds and runs natively on 64-bit Windows 10 (1903+) / 11 with the same sources as
-on Linux. Players: see `README-Windows.txt` (it ships in the package).
+on Linux. Players: see `README-Uncharted.txt`, staged as `README.txt` inside the package.
 
 ## Build
 
@@ -23,22 +23,20 @@ Then, in the repository:
 
 ```bash
 git submodule update --init --recursive
-bash build.sh                      # out/bb-probe.exe, out/bb-gpu-capabilities.exe
+bash build.sh                                   # out/bb-probe.exe, out/bb-gpu-capabilities.exe
 BB_GAME_DIR=F:/path/to/CUSA03173 python run.py
-python launcher/bbport_launcher_win.py
-bash packaging/windows/package.sh  # dist/bbport-windows/ and .zip: Bloodborne.exe + DLLs
+python launcher/uncharted_launcher.py           # Play | Settings Tk launcher
+bash packaging/windows/package.sh               # dist/uncharted-windows/ and .zip
 ```
 
 `run.py` is the Windows `run.sh` (same variables; works from a plain Windows Python too).
-The package freezes the launcher with PyInstaller (a private venv in `out/pyenv`, from a
-python.org Python) into `Bloodborne.exe`, which also runs `run.py` (`--run`), the preparation
-scripts (`--script`) and the game without the window (`--play`): players need no Python.
-`Play Bloodborne.exe` (`packaging/windows/play.c`) is a small native program that runs
-`Bloodborne.exe --play` from its folder and waits for it, for players who want to start the
-game directly with the saved settings.
-`patches.py` applies the 1.09 patches only to a 1.09 game (`BB_FORCE_PATCHES=1` overrides);
-`run.py` then runs other versions at 30 FPS with live resolution changes.
-From a source tree it adds `C:\msys64\clang64\bin` (or `$MSYS2_ROOT`) to `PATH` for the DLLs.
+`package.sh` freezes `launcher/uncharted_launcher.py` with PyInstaller (a private venv in
+`out/pyenv`, from a python.org Python) into `Uncharted.exe`, which also runs `run.py` (`--run`),
+the preparation scripts (`--script`) and the game without the window (`--play`), so players need
+no Python. `Play Uncharted.exe` (`packaging/windows/play.c`) is a small native program that runs
+`Uncharted.exe --play` from its folder and waits for it.
+`scripts/patches.py` applies the game's version patches; from a source tree `run.py` adds
+`C:\msys64\clang64\bin` (or `$MSYS2_ROOT`) to `PATH` for the DLLs.
 `bash tools/fetch_fsr4_assets.sh` works in the CLANG64 shell as on Linux.
 
 DLSS (optional): `DLSS_SDK_ROOT=<checkout of github.com/NVIDIA/DLSS> bash
@@ -53,11 +51,14 @@ license into `out/` (next to `out/bb-probe.exe`); `package.sh` ships them when p
 loads the DLL at run time (`vk_xess.cpp`, no MSVC needed) with the same inputs as DLSS. The PC needs the
 Visual C++ 2022 x64 Redistributable. `BB_XESS=0` turns it off, `BB_XESS_DLL=<file>` picks another copy.
 
-The launcher texts are written in English with the Russian beside them; the other languages
-are in `launcher/bbport_lang.py` (one list per language in the order of `KEYS`; a missing or
-empty text falls back to English). The icon (`launcher/bloodborne.ico`/`.png`) is drawn by
-`packaging/windows/make_icon.py` and built into `Bloodborne.exe`, `bb-probe.exe` (the game
-window) and `bb-gpu-capabilities.exe`.
+Launcher text is written in English and translated into Spanish, Portuguese, French, German,
+Italian and Japanese. `launcher/uncharted_i18n.py` merges the legacy base tables in
+`bbport_lang.py`/`bbport_lang_more.py` with `uncharted_i18n_extra.py` and the two-destination
+layout strings; missing or empty text falls back to English. `tests/test_uncharted_i18n.py`
+parses every literal `_('...')` in the launcher and requires real translations with identical
+format fields in all six languages. The icon (`launcher/uncharted.ico`) is drawn by
+`packaging/windows/make_uncharted_icon.py` and built into `Uncharted.exe`, `bb-probe.exe` (the
+game window) and `bb-gpu-capabilities.exe`.
 
 ## What is different from Linux
 
@@ -78,5 +79,5 @@ and the presented image of the next frame to `BB_DUMP_DIR` (raw 32-bit pixels), 
 works for menus and movies.
 
 Not ported: the watchdog/`--timeout` thread dumps (Linux signals), userfaultfd tracking
-(`BB_UFFD`), MangoHud, PGO (GCC flags), the GTK launcher (`launcher/bbport_launcher_win.py`, Tkinter, replaces it), and
-the `tests/` programs (several use Linux-only APIs).
+(`BB_UFFD`), MangoHud, PGO (GCC flags), the GTK launcher on Windows (the Tk launcher replaces it), and
+the `tests/` programs (several use Linux-only APIs). The Linux GTK launcher (`launcher/bbport_launcher.py`) is still used by the Nix and AppImage packages; Windows uses the Tk launcher (`launcher/uncharted_launcher.py`).
