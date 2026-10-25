@@ -168,7 +168,7 @@ def main(dest):
         'validation': {'manual_gameplay': 'NOT_PERFORMED',
                        'gameplay': 'BLOCKED: proprietary game dump and compatible GPU not supplied',
                        'native_gui_launch': 'See separate native-launch-results.json artifact',
-                       'localization': 'Known upstream translation-coverage test failures; draft candidate only'},
+                       'localization': 'Strict coverage and format-field checks: see exact-source Runtime CI results'},
         'files': files,
     }
     metadata = dest / 'BUILD-METADATA.json'

@@ -91,7 +91,8 @@ Mission 7.14 review-candidate notes
 - This is a draft integration candidate, not a production-safety certification. CRIT-06
   sibling unmap gaps, intentional invalidation, stale async pointers and mixed-protection
   widening remain unresolved. The placeholder-leaf experiment is NOT used by this runtime.
-- Upstream localization coverage is incomplete; untranslated text falls back to English.
+- Launcher text coverage is checked for all six supported non-English languages.
+  English fallback remains available for unknown text; human linguistic review is still useful.
 - Disable 'Look for a new version' on Advanced before testing. Do not install an upstream
   auto-update over this review build: it would replace the fork's unmerged work.
 - Test with a COPY of your saves. Start at 1080p, 60 FPS, AA and frame generation off.

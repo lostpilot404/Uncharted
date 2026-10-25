@@ -5,7 +5,8 @@
 On the launcher's **Log** page:
 
 - **Export diagnostics** prepares a bounded, sanitized **snapshot**. Select each file in
-  the preview to inspect it, then **Save ZIP** to a new filename or **Cancel**. Saving
+  the preview to inspect it (visible horizontal and vertical scrollbars), then **Save ZIP**
+  to a new filename or **Cancel**. Saving
   writes precisely the previewed snapshot, even if the running application logs more
   information afterwards. Nothing is uploaded. Existing files are never overwritten.
 - **Open logs folder** opens `%APPDATA%/uncharted-launcher/diagnostics`.
@@ -112,9 +113,12 @@ implemented. Diagnostic correctness does not repair CRIT-06 or qualify productio
 metadata, bounded rotation, private settings/text, source provenance, manifests and
 snapshot consistency, oversized reports, symlink omission, no overwrite/partial ZIP,
 simulated permission/disk-full failures, actual launcher early-import failure, actual
-product CLI export, GUI spawn failure and output/exit capture under write failure.
+product CLI export, GUI spawn failure and output/exit capture under write failure,
+and mocked preview scrollbar bindings, read-only file selection and exact-snapshot Save.
+The preview has visible horizontal and vertical scrollbars.
 The newly added UI text has translations in all six supported non-English languages;
-pre-existing translation coverage failures remain a separate blocker.
+the remaining coverage gaps are now translated as well. The complete original inventory
+is in `diagnostics-translation-gaps.json`; strict coverage and format-field tests remain enabled.
 
 The Windows package smoke test retains clean ZIP/hash/PE/provenance and actual default
 GUI launch/normal-close/runtime-probe checks. It additionally invokes the shipped app's

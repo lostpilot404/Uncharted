@@ -312,3 +312,61 @@ class LocalDiagnosticsTests(unittest.TestCase):
                              ('Cookie: session=onePrivate; other=twoPrivate', 'twoPrivate'),
                              ('Authorization: Custom firstPrivate secondPrivate', 'secondPrivate')]:
             self.assertNotIn(secret, redact(text))
+
+    def test_preview_scrollbars_readonly_selection_and_exact_saved_snapshot(self):
+        launcher = self.launcher_module()
+        window = launcher.Launcher.__new__(launcher.Launcher)
+        window.root = mock.Mock()
+        window.tk, window.ttk = mock.Mock(), mock.Mock()
+        window.filedialog, window.messagebox = mock.Mock(), mock.Mock()
+        window.current = mock.Mock(return_value={'start': 'u1'})
+        files = {'manifest.json': b'{"files": []}', 'launcher.log': ('wide line ' * 1000).encode()}
+        diag = mock.Mock()
+        diag.snapshot.return_value = files
+        selected = window.tk.StringVar.return_value
+        selected.get.return_value = 'manifest.json'
+        preview = window.tk.Text.return_value
+        vertical, horizontal = mock.Mock(), mock.Mock()
+        window.ttk.Scrollbar.side_effect = [vertical, horizontal]
+        buttons = {}
+        def button(_parent, **kwargs):
+            buttons[kwargs['text']] = kwargs['command']
+            return mock.Mock()
+        window.ttk.Button.side_effect = button
+        with mock.patch.object(launcher, 'DIAGNOSTICS', diag):
+            window.export_diagnostics()
+        viewport = window.tk.Frame.return_value
+        viewport.pack.assert_called_once_with(fill='both', expand=True, padx=10, pady=10)
+        window.tk.Text.assert_called_once_with(viewport, wrap='none')
+        self.assertEqual(window.ttk.Scrollbar.call_args_list, [
+            mock.call(viewport, orient='vertical', command=preview.yview),
+            mock.call(viewport, orient='horizontal', command=preview.xview)])
+        preview.configure.assert_any_call(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
+        preview.grid.assert_called_once_with(row=0, column=0, sticky='nsew')
+        vertical.grid.assert_called_once_with(row=0, column=1, sticky='ns')
+        horizontal.grid.assert_called_once_with(row=1, column=0, sticky='ew')
+        viewport.rowconfigure.assert_called_once_with(0, weight=1)
+        viewport.columnconfigure.assert_called_once_with(0, weight=1)
+        preview.insert.assert_called_with('1.0', files['manifest.json'].decode())
+        preview.configure.assert_called_with(state='disabled')
+        chooser = window.ttk.Combobox.return_value
+        self.assertEqual(window.ttk.Combobox.call_args.kwargs['state'], 'readonly')
+        chooser.bind.assert_called_once()
+        event, show = chooser.bind.call_args.args
+        self.assertEqual(event, '<<ComboboxSelected>>')
+        selected.get.return_value = 'launcher.log'
+        show()
+        preview.insert.assert_called_with('1.0', files['launcher.log'].decode())
+        preview.configure.assert_called_with(state='disabled')
+        self.assertEqual(preview.configure.call_args_list[-4:], [
+            mock.call(state='normal'), mock.call(state='disabled'),
+            mock.call(state='normal'), mock.call(state='disabled')])
+        # Recollection would save different bytes. Save must use the original object.
+        diag.snapshot.return_value = {'manifest.json': b'CHANGED'}
+        destination = str(self.root / 'previewed.zip')
+        window.filedialog.asksaveasfilename.return_value = destination
+        with mock.patch.object(launcher, 'DIAGNOSTICS', diag):
+            buttons[launcher._('Save ZIP')]()
+        diag.snapshot.assert_called_once_with({'start': 'u1'})
+        diag.export.assert_called_once_with(destination, files)
+        self.assertIs(diag.export.call_args.args[1], files)

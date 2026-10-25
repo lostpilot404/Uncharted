@@ -52,5 +52,34 @@ class LauncherTranslationTests(unittest.TestCase):
                 self.assertEqual(texts - set(uncharted_i18n.TRANSLATIONS[language]), set())
 
 
+class LauncherTranslationReadinessTests(unittest.TestCase):
+    def test_enumerated_gaps_are_translated_not_english_fallbacks(self):
+        import json
+        inventory = json.loads((ROOT / 'docs/diagnostics-translation-gaps.json').read_text(encoding='utf-8'))
+        for language, texts in inventory['missing_before_fix'].items():
+            for text in texts:
+                with self.subTest(language=language, text=text):
+                    self.assertIn(text, uncharted_i18n.TRANSLATIONS[language])
+                    self.assertNotEqual(uncharted_i18n.translate(language, text), text)
+
+    def test_all_launcher_translation_format_fields_are_preserved(self):
+        import collections
+        import string
+        tree = ast.parse((ROOT / 'launcher/uncharted_launcher.py').read_text(encoding='utf-8'))
+        texts = {node.args[0].value for node in ast.walk(tree)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                 and node.func.id == '_' and node.args
+                 and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)}
+        def fields(text):
+            return collections.Counter((field, spec, conversion)
+                                       for _, field, spec, conversion in string.Formatter().parse(text)
+                                       if field is not None)
+        for language in ('es', 'pt', 'fr', 'de', 'it', 'ja'):
+            for text in texts:
+                with self.subTest(language=language, text=text):
+                    self.assertIn(text, uncharted_i18n.TRANSLATIONS[language])
+                    self.assertEqual(fields(text), fields(uncharted_i18n.TRANSLATIONS[language][text]))
+
+
 if __name__ == '__main__':
     unittest.main()
