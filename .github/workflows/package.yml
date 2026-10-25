@@ -191,6 +191,7 @@ jobs:
             out/gpu/CMakeCache.txt
             out/package-launch/native-launch-results.json
             out/package-launch/*.log
+            out/package-launch/diagnostics-export.zip
           if-no-files-found: warn
           retention-days: 90
 

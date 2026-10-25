@@ -21,14 +21,15 @@ $env:APPDATA = Join-Path $Results 'appdata'
 $env:BB_DATA_DIR = Join-Path $Results 'data'
 $env:PATH = (Join-Path $package 'bin') + ';' + $env:PATH
 New-Item -ItemType Directory -Force (Join-Path $env:APPDATA 'uncharted-launcher') | Out-Null
-@{check_updates=$false; ui_language='en'} | ConvertTo-Json |
+@{check_updates=$false; ui_language='en'; player_name='DIAGNOSTICS_PRIVATE_CANARY';
+  game_dir='C:\PrivateDiagnosticFixture'; extra_env='API_TOKEN=DIAGNOSTICS_PRIVATE_ENV_CANARY'} | ConvertTo-Json |
     Set-Content (Join-Path $env:APPDATA 'uncharted-launcher/settings.json')
 $os = Get-CimInstance Win32_OperatingSystem
 $result = [ordered]@{
     source_sha=$metadata.source_sha; zip_sha256=(Get-FileHash $Zip -Algorithm SHA256).Hash.ToLower();
     os=$os.Caption; build=$os.BuildNumber; architecture=$env:PROCESSOR_ARCHITECTURE;
     clean_extraction='PASS'; hashes='PASS'; launcher='NOT_RUN'; runtime_controller_probe='NOT_RUN';
-    manual_testing='NOT_PERFORMED'; gameplay='BLOCKED: no game dump or suitable GPU supplied'
+    diagnostics_export='NOT_RUN'; manual_testing='NOT_PERFORMED'; gameplay='BLOCKED: no game dump or suitable GPU supplied'
 }
 $process = $null
 $failed = $false
@@ -59,6 +60,62 @@ try {
             if ($process.ExitCode -ne 0) { $result.launcher='FAIL: nonzero GUI exit'; $failed=$true }
         }
     }
+    # Product CLI export uses the same snapshot/export path as the preview UI.
+    # This is NOT a claim of human testing of the file chooser/preview interaction.
+    $exportZip = Join-Path $Results 'diagnostics-export.zip'
+    $exporter = Start-Process -FilePath (Join-Path $package 'Uncharted.exe') `
+        -ArgumentList @('--export-diagnostics', ('"{0}"' -f $exportZip)) `
+        -WorkingDirectory $package -PassThru `
+        -RedirectStandardOutput (Join-Path $Results 'diagnostics.stdout.log') `
+        -RedirectStandardError (Join-Path $Results 'diagnostics.stderr.log')
+    if (-not $exporter.WaitForExit(20000)) {
+        Stop-Process -Id $exporter.Id -Force
+        throw 'Packaged diagnostic export timed out'
+    }
+    if ($exporter.ExitCode -ne 0) { throw "Diagnostic export exit: $($exporter.ExitCode)" }
+    $archive = [IO.Compression.ZipFile]::OpenRead($exportZip)
+    try {
+        $report = @{}
+        $total = 0
+        foreach ($entry in $archive.Entries) {
+            if ($entry.FullName -match '[/\\]' -or $entry.Length -gt 262144) {
+                throw "Unsafe/oversized diagnostic member: $($entry.FullName)"
+            }
+            $stream = $entry.Open()
+            $buffer = [IO.MemoryStream]::new()
+            try { $stream.CopyTo($buffer); $bytes = $buffer.ToArray() }
+            finally { $stream.Dispose(); $buffer.Dispose() }
+            $total += $bytes.Length
+            $report[$entry.FullName] = [ordered]@{
+                bytes=$bytes.Length
+                sha256=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+                text=[Text.Encoding]::UTF8.GetString($bytes)
+            }
+        }
+        if ($total -gt 2097152) { throw 'Diagnostic report exceeds uncompressed size cap' }
+        foreach ($name in @('diagnostics.json','session.json','settings-redacted.json','launcher.log',
+                            'previous-session.json','manifest.json','README.txt')) {
+            if (-not $report.ContainsKey($name)) { throw "Missing diagnostics member: $name" }
+        }
+        $info = $report['diagnostics.json'].text | ConvertFrom-Json
+        if ($info.source_sha -ne $metadata.source_sha -or $info.remote_telemetry -ne $false) {
+            throw 'Diagnostic source provenance or offline policy mismatch'
+        }
+        $previous = $report['previous-session.json'].text | ConvertFrom-Json
+        if ($previous.clean_shutdown -ne $true) { throw 'GUI normal shutdown was not persisted' }
+        $manifest = $report['manifest.json'].text | ConvertFrom-Json
+        foreach ($item in $manifest.files) {
+            if ($report[$item.name].sha256 -ne $item.sha256 -or $report[$item.name].bytes -ne $item.bytes) {
+                throw "Diagnostic manifest mismatch: $($item.name)"
+            }
+        }
+        $text = ($report.Values | ForEach-Object { $_.text }) -join "`n"
+        foreach ($private in @('DIAGNOSTICS_PRIVATE_CANARY','DIAGNOSTICS_PRIVATE_ENV_CANARY',
+                               'PrivateDiagnosticFixture', $env:APPDATA)) {
+            if ($text.Contains($private)) { throw 'Private fixture leaked into diagnostic report' }
+        }
+        $result.diagnostics_export='PASS: exact source, manifest hashes, shutdown history, privacy canaries, size limit'
+    } finally { $archive.Dispose() }
     # Exercise the shipped runtime's actual native controller entry point, not a test binary.
     $probe = Start-Process -FilePath (Join-Path $package 'bin/bb-probe.exe') `
         -ArgumentList '--controller-info' -WorkingDirectory $package -PassThru `

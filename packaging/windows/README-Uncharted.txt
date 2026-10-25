@@ -100,3 +100,15 @@ Mission 7.14 review-candidate notes
   GPU and gameplay checks require your decrypted game data and cannot be established by CI.
 - If launch fails, preserve user\last_run.log, the Log page output, BUILD-METADATA.json and
   the exact ZIP checksum. Missing DLL errors can indicate incomplete extraction or drivers.
+
+LOCAL DIAGNOSTICS (no telemetry uploads)
+  Log -> Export diagnostics previews a bounded, sanitized local ZIP. Inspect every
+  member, then Save ZIP to a NEW filename or Cancel. Redaction is best effort:
+  unknown private runtime text may remain. No files are uploaded automatically.
+  Log -> Open logs folder opens %APPDATA%/uncharted-launcher/diagnostics.
+  Report a problem asks before opening GitHub and never attaches your logs.
+  Current/previous runtime and launcher history are size-limited. Native dumps,
+  game contents, saves and full settings are excluded. Driver version may be unavailable.
+  Explicit CLI alternative: Uncharted.exe --export-diagnostics C:\Reports\new-report.zip
+  Inspect the ZIP yourself before sharing. Directory must exist; no overwrite.
+  Better diagnostics do not fix the known CRIT-06 memory-safety limitations.

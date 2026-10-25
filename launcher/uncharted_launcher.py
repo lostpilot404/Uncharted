@@ -31,6 +31,45 @@ FROZEN = getattr(sys, 'frozen', False)
 PORT_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+VERSION = '0.3.9'
+import uncharted_diagnostics
+
+DIAGNOSTICS = None
+if __name__ == '__main__' and sys.argv[1:2] not in (['--run'], ['--script'], ['--install-update']):
+    DIAGNOSTICS = uncharted_diagnostics.Diagnostics(
+        Path(os.environ.get('APPDATA', Path.home())) / 'uncharted-launcher' / 'diagnostics',
+        PORT_DIR, VERSION)
+    import traceback
+    _original_exception_hook = sys.excepthook
+    def _diagnostic_exception(kind, error, tb):
+        DIAGNOSTICS.failure('launcher.exception', error)
+        DIAGNOSTICS.event('ERROR', 'launcher.traceback', ''.join(traceback.format_exception(kind, error, tb)))
+        _original_exception_hook(kind, error, tb)
+        try:
+            if sys.argv[1:2] == ['--export-diagnostics']:
+                return
+            ctypes.windll.user32.MessageBoxW(None, 'Uncharted could not start. Check the diagnostics folder in '
+                '%APPDATA%/uncharted-launcher. No report was uploaded.', 'Uncharted', 0x10)
+        except (AttributeError, OSError):
+            pass
+    sys.excepthook = _diagnostic_exception
+    def _diagnostic_thread_exception(args):
+        DIAGNOSTICS.failure('launcher.worker', args.exc_value)
+        DIAGNOSTICS.event('ERROR', 'launcher.traceback', ''.join(
+            traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback)))
+    _original_thread_hook = threading.excepthook
+    _record_thread_exception = _diagnostic_thread_exception
+    def _diagnostic_thread_exception(args):
+        _record_thread_exception(args)
+        _original_thread_hook(args)
+    threading.excepthook = _diagnostic_thread_exception
+
+
+def diagnostic_event(level, component, message):
+    if DIAGNOSTICS:
+        DIAGNOSTICS.event(level, component, message)
+
+
 import trophies  # noqa: E402  (scripts/trophies.py: the games' trophy lists)
 import uncharted_i18n
 
@@ -40,7 +79,6 @@ CONFIG_FILE = CONFIG_DIR / 'settings.json'
 NAME = 'Uncharted'
 AUTHOR = 'SuperMedo'
 # This build; GitHub release tags are v<VERSION> (their digits are compared).
-VERSION = '0.3.9'
 RELEASES_API = 'https://api.github.com/repos/Supermedo/uncharted_pc/releases/latest'
 RELEASES_PAGE = 'https://github.com/Supermedo/uncharted_pc/releases/latest'
 UPDATE_DIR = Path(tempfile.gettempdir()) / 'uncharted-update'
@@ -295,7 +333,10 @@ def run_command():
 def load_json(path, default):
     try:
         return json.loads(Path(path).read_text(encoding='utf-8-sig'))
-    except (OSError, ValueError):
+    except (OSError, ValueError) as error:
+        if Path(path) == CONFIG_FILE:
+            diagnostic_event('INFO' if isinstance(error, FileNotFoundError) else 'WARNING',
+                             'configuration', f'Settings unavailable; defaults used: {type(error).__name__}')
         return default
 
 
@@ -590,12 +631,15 @@ class Launcher:
         self.tk, self.ttk, self.filedialog, self.messagebox = tk, ttk, filedialog, messagebox
         self.root = root
         self.app = {**APP_DEFAULTS, **load_json(CONFIG_FILE, {})}
+        if DIAGNOSTICS:
+            DIAGNOSTICS.redact.learn(self.app)
+            DIAGNOSTICS.stage('configuration.loaded')
         UI_LANGUAGE = uncharted_i18n.language_code(self.app.get('ui_language', ''))
         self.configure_art()
         self.vars = {}
         self.process = self.job = None
         self.entered, self.last_problem, self.stopping = False, '', False
-        self.output = queue.Queue()
+        self.output = queue.Queue(maxsize=4096)
         self.ui_calls = queue.Queue()
         self.banner_key = self.banner_scaled = self.cover_image = None
         self.card_hot = None
@@ -613,6 +657,13 @@ class Launcher:
         self.build()
         self.show('play')
         root.protocol('WM_DELETE_WINDOW', self.close)
+        if DIAGNOSTICS:
+            DIAGNOSTICS.on_error = lambda text: self.ui_calls.put(
+                lambda: self.messagebox.showwarning(NAME, _('Local diagnostics could not be written: {}').format(text)))
+            for text in DIAGNOSTICS.errors[:1]:
+                DIAGNOSTICS.on_error(text)
+            DIAGNOSTICS.stage('launcher.ready')
+        root.report_callback_exception = self.callback_exception
         root.after(100, self.drain_output)
         root.after(150, self.detect_controller)
         if self.app.get('check_updates', True):
@@ -1852,6 +1903,12 @@ class Launcher:
         head.pack(fill='x', padx=self.px(26), pady=(self.px(18), self.px(14)))
         tk.Label(head, text=_('Log'), bg=SURFACE, fg=TEXT, font=self.font_title).pack(side='left')
         self.pill(head, _('Copy'), self.copy_log, background=SURFACE, padding=(16, 6)).pack(side='right')
+        actions = tk.Frame(shell, bg=SURFACE)
+        actions.pack(fill='x', padx=self.px(26), pady=(0, self.px(8)))
+        for label, action in ((_('Export diagnostics'), self.export_diagnostics),
+                              (_('Open logs folder'), self.open_logs_folder),
+                              (_('Report a problem'), self.report_problem)):
+            self.pill(actions, label, action).pack(side='left', padx=(0, 8))
         body = tk.Frame(shell, bg=SURFACE)
         body.pack(fill='both', expand=True, padx=self.px(26), pady=(0, self.px(8)))
         self.log = tk.Text(body, bg=CARD, fg='#d9d4ca', insertbackground=TEXT, font=('Cascadia Mono', 9), wrap='none',
@@ -1880,9 +1937,16 @@ class Launcher:
         try:
             result = subprocess.run([str(exe), '--memory'], capture_output=True, text=True,
                                     timeout=30, env=env, creationflags=NO_WINDOW)
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, subprocess.TimeoutExpired) as error:
+            diagnostic_event('WARNING', 'graphics', f'GPU probe unavailable: {error}')
             return
-        self.gpu_vram_mb = parse_gpu_memory(result.stderr)[1]
+        gpu_name, self.gpu_vram_mb = parse_gpu_memory(result.stderr)
+        if DIAGNOSTICS:
+            with DIAGNOSTICS.lock:
+                DIAGNOSTICS.session['gpu'] = {'model': DIAGNOSTICS.redact(gpu_name or 'unavailable'),
+                                             'vram_mib': self.gpu_vram_mb}
+                DIAGNOSTICS._persist()
+            diagnostic_event('INFO', 'graphics', 'GPU memory probe completed')
         self.ui_calls.put(self.refresh_vram_warning)
 
     def refresh_vram_warning(self):
@@ -2008,8 +2072,10 @@ class Launcher:
                 if result.returncode:
                     raise OSError(result.stderr.strip() or _('controller probe failed'))
                 info, error = parse_controller_probe(result.stdout), ''
+                diagnostic_event('INFO', 'controller', 'Controller probe completed')
             except (OSError, subprocess.TimeoutExpired) as failure:
                 info, error = None, str(failure)
+                diagnostic_event('WARNING', 'controller', f'Controller probe failed: {failure}')
             self.ui_calls.put(lambda: self.show_controller(info, error, test))
         threading.Thread(target=work, daemon=True).start()
 
@@ -2043,18 +2109,24 @@ class Launcher:
         if self.process:
             return
         self.collect()
+        if DIAGNOSTICS:
+            DIAGNOSTICS.begin_run(self.app, Path(self.app.get('user_dir') or DATA_DIR / 'user'))
         folder = game_folder(self.app, self.app['start'])
         if not folder or not Path(folder).is_dir():
+            diagnostic_event('ERROR', 'runtime.validation', 'Game folder unavailable')
             self.messagebox.showerror(NAME, _('Choose the game folder with eboot.bin.'))
             self.show('game')
             return
         if not game_available(self.app, self.app['start']):
+            diagnostic_event('ERROR', 'runtime.validation', 'Selected game unavailable')
             self.messagebox.showerror(NAME, _('This game is not in the chosen folder.'))
             return
         self.set_log('')
         try:
             env = game_environment(self.app)
         except OSError as error:
+            if DIAGNOSTICS:
+                DIAGNOSTICS.failure('runtime.configuration', error)
             self.messagebox.showerror(
                 NAME, _('Could not save the input configuration: {}').format(error))
             return
@@ -2063,9 +2135,13 @@ class Launcher:
                                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                             stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
         except OSError as error:
+            if DIAGNOSTICS:
+                DIAGNOSTICS.failure('runtime.spawn', error)
             self.append(_('Could not start: {}').format(error) + '\n')
             self.process = None
             return
+        if DIAGNOSTICS:
+            DIAGNOSTICS.runtime_started(self.process.pid)
         self.job = GameJob(self.process)
         self.entered, self.last_problem, self.stopping = False, '', False
         threading.Thread(target=self.read_output, args=(self.process,), daemon=True).start()
@@ -2079,21 +2155,42 @@ class Launcher:
 
     def read_output(self, process):
         """Helper thread: the game's output to the Log page and to <saves folder>/last_run.log."""
-        log = None
+        fallback = None
+        if not DIAGNOSTICS:
+            fallback = uncharted_diagnostics.BoundedLog(
+                Path(self.app.get('user_dir') or DATA_DIR / 'user') / 'last_run.log',
+                lambda text: self.output.put(text + '\n'))
         try:
-            log_dir = Path(self.app.get('user_dir') or DATA_DIR / 'user')
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log = open(log_dir / 'last_run.log', 'w', encoding='utf-8', buffering=1)
-        except OSError:
-            pass
-        for raw in iter(process.stdout.readline, b''):
-            text = raw.decode('utf-8', errors='replace')
-            self.output.put(text)
-            if log:
-                log.write(text.replace('\r\n', '\n'))
-        if log:
-            log.close()
-        self.output.put((process.wait(),))
+            for raw in iter(lambda: process.stdout.readline(8192), b''):
+                text = raw.decode('utf-8', errors='replace')
+                self.queue_output(text)
+                if DIAGNOSTICS:
+                    DIAGNOSTICS.runtime_text(text)
+                else:
+                    fallback.write(text)
+        except OSError as error:
+            if DIAGNOSTICS:
+                DIAGNOSTICS.failure('runtime.capture', error)
+        finally:
+            code = process.wait()
+            if DIAGNOSTICS:
+                DIAGNOSTICS.runtime_exit(code)
+            self.queue_output((code,))
+
+    def queue_output(self, item):
+        while True:
+            try:
+                self.output.put_nowait(item)
+                return
+            except queue.Full:
+                try:
+                    self.output.get_nowait()
+                except queue.Empty:
+                    pass
+                if not getattr(self, 'display_log_truncated', False):
+                    self.display_log_truncated = True
+                    diagnostic_event('WARNING', 'launcher.log',
+                                     'Display queue full; older display lines omitted. Persistent capture continues.')
 
     def drain_output(self):
         while not self.ui_calls.empty():
@@ -2134,10 +2231,15 @@ class Launcher:
         if not self.process:
             return
         self.stop_button.configure(state='disabled')
+        if DIAGNOSTICS:
+            DIAGNOSTICS.stop_requested()
         try:
             if not self.job or not self.job.terminate():
                 terminate_process_tree(self.process)
         except (OSError, subprocess.SubprocessError) as error:
+            if DIAGNOSTICS:
+                DIAGNOSTICS.stop_requested(False)
+                DIAGNOSTICS.failure('runtime.stop', error)
             self.stop_button.configure(state='normal')
             self.messagebox.showerror(NAME, _('Could not stop the game: {}').format(error))
             return
@@ -2161,7 +2263,67 @@ class Launcher:
 
     def copy_log(self):
         self.root.clipboard_clear()
-        self.root.clipboard_append(self.log.get('1.0', 'end'))
+        text = self.log.get('1.0', 'end')
+        self.root.clipboard_append(DIAGNOSTICS.redact(text) if DIAGNOSTICS else text)
+
+    def callback_exception(self, kind, error, tb):
+        import traceback
+        if DIAGNOSTICS:
+            DIAGNOSTICS.failure('launcher.callback', error)
+            DIAGNOSTICS.event('ERROR', 'launcher.traceback', ''.join(traceback.format_exception(kind, error, tb)))
+        self.messagebox.showerror(NAME, _('Launcher error: {}').format(str(error)[:500]))
+
+    def open_logs_folder(self):
+        if DIAGNOSTICS:
+            self.open_path(DIAGNOSTICS.directory)
+
+    def report_problem(self):
+        if self.messagebox.askyesno(NAME, _('Open the issue form in your browser? No diagnostics will be uploaded.')):
+            webbrowser.open('https://github.com/lostpilot404/Uncharted/issues/new?template=bug_report.yml')
+
+    def export_diagnostics(self):
+        if not DIAGNOSTICS:
+            self.messagebox.showerror(NAME, _('Diagnostics are unavailable.'))
+            return
+        try:
+            files = DIAGNOSTICS.snapshot(self.current())
+        except (OSError, ValueError) as error:
+            self.messagebox.showerror(NAME, _('Could not export diagnostics: {}').format(error))
+            return
+        # Preview exactly the bytes that will be saved, not a freshly recollected report.
+        dialog = self.tk.Toplevel(self.root)
+        dialog.title(_('Diagnostics preview'))
+        dialog.geometry('900x650')
+        self.tk.Label(dialog, text=_('Review every file before sharing. Sanitization is best effort. No upload occurs.'),
+                      wraplength=850).pack(padx=10, pady=10)
+        selected = self.tk.StringVar(dialog, value='manifest.json')
+        chooser = self.ttk.Combobox(dialog, values=sorted(files), textvariable=selected, state='readonly')
+        chooser.pack(fill='x', padx=10)
+        preview = self.tk.Text(dialog, wrap='none')
+        scrollbar = self.ttk.Scrollbar(dialog, orient='vertical', command=preview.yview)
+        preview.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side='right', fill='y')
+        preview.pack(fill='both', expand=True, padx=10, pady=10)
+        def show(_event=None):
+            preview.configure(state='normal')
+            preview.delete('1.0', 'end')
+            preview.insert('1.0', files[selected.get()].decode('utf-8', 'replace'))
+            preview.configure(state='disabled')
+        chooser.bind('<<ComboboxSelected>>', show)
+        show()
+        def save():
+            destination = self.filedialog.asksaveasfilename(parent=dialog, defaultextension='.zip',
+                initialfile='uncharted-diagnostics.zip', filetypes=[('ZIP', '*.zip')])
+            if not destination:
+                return
+            try:
+                DIAGNOSTICS.export(destination, files)
+            except (OSError, ValueError, zipfile.BadZipFile) as error:
+                self.messagebox.showerror(NAME, _('Could not export diagnostics: {}').format(error))
+                return
+            dialog.destroy()
+        self.ttk.Button(dialog, text=_('Save ZIP'), command=save).pack(side='left', padx=10, pady=10)
+        self.ttk.Button(dialog, text=_('Cancel'), command=dialog.destroy).pack(side='left', padx=10, pady=10)
 
     def open_path(self, path, key=None):
         if key == 'user_dir' and not path:
@@ -2522,8 +2684,9 @@ class Launcher:
     def close(self):
         try:
             self.collect()
-        except Exception:  # never keep the window open over a settings problem
-            pass
+        except Exception as error:  # never keep the window open over a settings problem
+            if DIAGNOSTICS:
+                DIAGNOSTICS.failure('configuration.save', error)
         self.root.destroy()
 
 
@@ -2607,33 +2770,56 @@ def install_update(target, wait_pid):
 
 
 def play_without_window(settings):
-    """--play: the game with the saved settings (shortcuts, Steam); output to the console when
-    there is one and to <saves folder>/last_run.log."""
+    """Saved-settings launch with the same bounded capture as the GUI; no console required."""
     attach_stdio()
-    log_dir = Path(settings.get('user_dir') or DATA_DIR / 'user')
-    log_dir.mkdir(parents=True, exist_ok=True)
-    with open(log_dir / 'last_run.log', 'w', encoding='utf-8', buffering=1) as log:
+    if DIAGNOSTICS:
+        DIAGNOSTICS.begin_run(settings, Path(settings.get('user_dir') or DATA_DIR / 'user'))
+        write = DIAGNOSTICS.runtime_text
+    else:
+        def warn(text):
+            if sys.stderr:
+                sys.stderr.write(text + '\n')
+        fallback = uncharted_diagnostics.BoundedLog(
+            Path(settings.get('user_dir') or DATA_DIR / 'user') / 'last_run.log', warn)
+        write = fallback.write
+    try:
+        env = game_environment(settings)
+    except OSError as error:
+        text = _('Could not save the input configuration: {}').format(error) + '\n'
+        write(text)
+        if DIAGNOSTICS:
+            DIAGNOSTICS.failure('runtime.configuration', error)
         try:
-            env = game_environment(settings)
-        except OSError as error:
-            text = _('Could not save the input configuration: {}').format(error) + '\n'
-            log.write(text)
-            try:
-                sys.stderr.write(text)
-            except (OSError, ValueError):
-                pass
-            return 1
+            sys.stderr.write(text)
+        except (AttributeError, OSError, ValueError):
+            pass
+        return 1
+    try:
         process = subprocess.Popen(run_command(), cwd=PORT_DIR, env=env,
                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
-        for raw in iter(process.stdout.readline, b''):
+    except OSError as error:
+        write(_('Could not start: {}').format(error) + '\n')
+        if DIAGNOSTICS:
+            DIAGNOSTICS.failure('runtime.spawn', error)
+        return 1
+    if DIAGNOSTICS:
+        DIAGNOSTICS.runtime_started(process.pid)
+    try:
+        for raw in iter(lambda: process.stdout.readline(8192), b''):
             text = raw.decode('utf-8', errors='replace')
-            log.write(text)
+            write(text)
             try:
                 sys.stdout.write(text)
-            except (OSError, ValueError):
+            except (AttributeError, OSError, ValueError):
                 pass
-        return process.wait()
+    except OSError as error:
+        if DIAGNOSTICS:
+            DIAGNOSTICS.failure('runtime.capture', error)
+    code = process.wait()
+    if DIAGNOSTICS:
+        DIAGNOSTICS.runtime_exit(code)
+    return code
 
 
 def main():
@@ -2645,6 +2831,16 @@ def main():
     if FROZEN and UPDATE_DIR not in PORT_DIR.parents:
         shutil.rmtree(UPDATE_DIR, ignore_errors=True)  # what a finished update left behind
     settings = {**APP_DEFAULTS, **load_json(CONFIG_FILE, {})}
+    if args[:1] == ['--export-diagnostics'] and len(args) == 2:
+        try:
+            if not DIAGNOSTICS:
+                raise OSError('Diagnostics unavailable')
+            DIAGNOSTICS.export(args[1], DIAGNOSTICS.snapshot(settings))
+        except (OSError, ValueError, zipfile.BadZipFile) as error:
+            if DIAGNOSTICS:
+                DIAGNOSTICS.failure('diagnostics.export', error)
+            sys.exit(1)
+        return
     if '--play' in args and game_available(settings, settings['start']):
         sys.exit(play_without_window(settings))
     try:
@@ -2663,4 +2859,12 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except SystemExit:
+        if DIAGNOSTICS:
+            DIAGNOSTICS.finish()
+        raise
+    else:
+        if DIAGNOSTICS:
+            DIAGNOSTICS.finish()
