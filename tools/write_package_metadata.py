@@ -14,8 +14,15 @@ UPDATES = ['ac2bfbc1602623745d8b291a8ced639d6ede6369',
            '754ed2ab4f1fdd21250c8785d4d4f49517d31292']
 
 
+def progress(message):
+    print(f'::notice title=package-metadata::{message}', flush=True)
+
+
 def command(*args):
-    p = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    progress('Run: ' + ' '.join(args))
+    p = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       timeout=60)
+    progress(f'Exit {p.returncode}: ' + ' '.join(args))
     return {'command': list(args), 'exit_code': p.returncode, 'output': p.stdout.strip()}
 
 
@@ -44,9 +51,12 @@ def pe_machine(path):
 
 def main(dest):
     dest = Path(dest)
-    sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+    progress('Read exact source HEAD')
+    sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True, timeout=60).strip()
     for ancestor in [BASE, *UPDATES]:
-        subprocess.run(['git', 'merge-base', '--is-ancestor', ancestor, sha], check=True)
+        progress('Verify ancestor: ' + ancestor)
+        subprocess.run(['git', 'merge-base', '--is-ancestor', ancestor, sha], check=True, timeout=60)
+    progress('Hash staged files and inspect PE architecture')
     files = []
     for path in sorted(dest.rglob('*')):
         if path.is_file() and path.name not in ('BUILD-METADATA.json', 'SHA256SUMS.txt'):
@@ -55,6 +65,9 @@ def main(dest):
             if path.suffix.lower() in ('.exe', '.dll', '.pyd'):
                 item['pe_machine'] = pe_machine(path)
             files.append(item)
+            if len(files) % 50 == 0:
+                progress(f'Hashed {len(files)} files; latest: {item["path"]}')
+    progress(f'File validation complete: {len(files)} files')
     result = {
         'source_sha': sha, 'base_sha': BASE, 'upstream_release_commits': UPDATES,
         'build_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),

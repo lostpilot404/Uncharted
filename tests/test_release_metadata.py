@@ -2,8 +2,10 @@
 import importlib.util
 from pathlib import Path
 import struct
+import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location(
     'release_metadata', Path(__file__).resolve().parents[1] / 'tools/write_package_metadata.py')
@@ -41,3 +43,11 @@ class ReleaseMetadataTests(unittest.TestCase):
             p.write_bytes(b'abc')
             self.assertEqual(metadata.digest(p),
                              'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
+
+    def test_provenance_command_timeout_is_fatal(self):
+        with mock.patch.object(metadata.subprocess, 'run',
+                               side_effect=subprocess.TimeoutExpired(['git'], 60)) as run, \
+                mock.patch.object(metadata, 'progress'):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                metadata.command('git', '--version')
+            self.assertEqual(run.call_args.kwargs['timeout'], 60)
