@@ -22,6 +22,7 @@ export USERPROFILE=${USERPROFILE:-$(cygpath -w "/c/Users/$(id -un)")}
 if [[ ! -x out/pyenv/Scripts/python.exe ]]; then
     "$python" -m venv out/pyenv
 fi
+echo "::notice title=package-stage::Install launcher freezing dependencies"
 out/pyenv/Scripts/python.exe -m pip install -q --disable-pip-version-check pyinstaller pillow tkinterdnd2
 # The scripts run inside Uncharted.exe (--script): the standard modules they import come along.
 hidden=()
@@ -29,7 +30,8 @@ for module in argparse base64 collections hashlib json re shutil struct tempfile
               uncharted_art uncharted_fonts uncharted_i18n uncharted_widgets bbport_steam PIL.ImageTk; do
     hidden+=(--hidden-import "$module")
 done
-out/pyenv/Scripts/python.exe -m PyInstaller --noconfirm --clean --log-level WARN --windowed \
+echo "::notice title=package-stage::Freeze the actual Tk launcher"
+out/pyenv/Scripts/python.exe -m PyInstaller --noconfirm --clean --log-level INFO --windowed \
     --name Uncharted --icon "$(cygpath -w "$PWD/launcher/uncharted.ico")" --distpath out/pyi-dist \
     --workpath out/pyi-work --specpath out/pyi-work --paths "$(cygpath -w "$PWD/scripts")" \
     --paths "$(cygpath -w "$PWD/launcher")" \
@@ -40,6 +42,7 @@ out/pyenv/Scripts/python.exe -m PyInstaller --noconfirm --clean --log-level WARN
 
 # The package is assembled in a fresh staging folder and zipped from there; dist/uncharted-windows
 # (a playable copy that may hold saves and settings) is only refreshed afterwards.
+echo "::notice title=package-stage::Stage launcher and native executables"
 dest=out/stage/uncharted-windows
 rm -rf -- out/stage
 mkdir -p "$dest/bin" "$dest/launcher" "$dest/scripts"
@@ -63,10 +66,12 @@ for exe in bb-probe.exe bb-gpu-capabilities.exe; do
     fi
 done
 # Every DLL the executables load from the CLANG64 tree (SDL3, FFmpeg, Vulkan loader, ...).
+echo "::notice title=package-stage::Inspect native runtime DLL dependencies with ldd"
 ldd "$dest/bin/bb-probe.exe" "$dest/bin/bb-gpu-capabilities.exe" |
     awk '/\/clang64\/bin\// {print $3}' | sort -u | while read -r dll; do
         cp -u "$dll" "$dest/bin/"
     done
+echo "::notice title=package-stage::Copy scripts, assets, optional runtimes and licenses"
 # Only what run.py runs to prepare a game (Bloodborne's patch and mod tools stay out).
 cp scripts/prepare.py scripts/link_modules.py scripts/link_libc.py scripts/content_profile.py scripts/trophies.py "$dest/scripts/"
 cp run.py LICENSE "$dest/"
@@ -111,10 +116,12 @@ for package in protobuf abseil-cpp openssl miniupnpc zlib; do
 done
 find "$dest" -name __pycache__ -prune -exec rm -r {} +
 # Provenance and per-file hashes travel inside the portable package.
+echo "::notice title=package-stage::Validate AMD64 PE files and write provenance"
 out/pyenv/Scripts/python.exe tools/write_package_metadata.py "$dest"
 mkdir -p dist
 rm -f dist/uncharted-windows.zip
 # Not Compress-Archive, which writes backslashes that Linux tools keep in the file names (#246).
+echo "::notice title=package-stage::Compress the portable ZIP"
 (cd out/stage && ../pyenv/Scripts/python.exe -c "
 import pathlib, zipfile
 with zipfile.ZipFile('../../dist/uncharted-windows.zip', 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
@@ -122,6 +129,7 @@ with zipfile.ZipFile('../../dist/uncharted-windows.zip', 'w', zipfile.ZIP_DEFLAT
 
 # Refresh dist/uncharted-windows, keeping what players create there (saves, settings), and only
 # while nothing runs from it: deleting a running launcher's files breaks it.
+echo "::notice title=package-stage::Refresh the local playable directory"
 play=dist/uncharted-windows
 running=$(powershell -NoProfile -Command \
     "@(Get-Process | Where-Object { \$_.Path -like '$(cygpath -w "$PWD/$play")\\*' }).Count" | tr -d '\r')

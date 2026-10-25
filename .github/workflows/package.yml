@@ -118,21 +118,24 @@ jobs:
           python-version: '3.12'
 
       - name: Assemble the package (packaging/windows/package.sh)
+        timeout-minutes: 20
         shell: msys2 {0}
         env:
           WINPYTHON_WINDOWS: ${{ steps.py.outputs.python-path }}
         run: |
-          set -e
+          set -euo pipefail
+          # Stream and persist diagnostics even if assembly hangs or is interrupted.
           # package.sh needs a python.org Python (PyInstaller), not MSYS2's.
           export WINPYTHON=$(cygpath -u "$WINPYTHON_WINDOWS")
           "$WINPYTHON" --version
-          if ! out=$(bash packaging/windows/package.sh 2>&1); then
-            printf '%s\n' "$out" | tail -40 | while IFS= read -r line; do
+          if bash packaging/windows/package.sh 2>&1 | tee out/package-logs/package.log; then
+            :
+          else
+            tail -40 out/package-logs/package.log | while IFS= read -r line; do
               echo "::error title=package.sh::${line}"
             done
             exit 1
           fi
-          printf '%s\n' "$out" | tee out/package-logs/package.log
 
       - name: Verify the package contents and checksum
         shell: msys2 {0}
