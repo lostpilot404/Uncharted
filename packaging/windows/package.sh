@@ -22,14 +22,16 @@ export USERPROFILE=${USERPROFILE:-$(cygpath -w "/c/Users/$(id -un)")}
 if [[ ! -x out/pyenv/Scripts/python.exe ]]; then
     "$python" -m venv out/pyenv
 fi
-out/pyenv/Scripts/python.exe -m pip install -q --disable-pip-version-check pyinstaller pillow
+echo "::notice title=package-stage::Install launcher freezing dependencies"
+out/pyenv/Scripts/python.exe -m pip install -q --disable-pip-version-check pyinstaller pillow tkinterdnd2
 # The scripts run inside Uncharted.exe (--script): the standard modules they import come along.
 hidden=()
-for module in argparse base64 collections hashlib json re shutil struct tempfile zlib ctypes.wintypes \
-              uncharted_art uncharted_fonts uncharted_widgets bbport_steam PIL.ImageTk; do
+for module in argparse base64 collections hashlib json re shutil struct tempfile zlib ctypes.wintypes cheats \
+              uncharted_diagnostics uncharted_art uncharted_fonts uncharted_i18n uncharted_widgets bbport_steam PIL.ImageTk; do
     hidden+=(--hidden-import "$module")
 done
-out/pyenv/Scripts/python.exe -m PyInstaller --noconfirm --clean --log-level WARN --windowed \
+echo "::notice title=package-stage::Freeze the actual Tk launcher"
+out/pyenv/Scripts/python.exe -m PyInstaller --noconfirm --clean --log-level INFO --windowed \
     --name Uncharted --icon "$(cygpath -w "$PWD/launcher/uncharted.ico")" --distpath out/pyi-dist \
     --workpath out/pyi-work --specpath out/pyi-work --paths "$(cygpath -w "$PWD/scripts")" \
     --paths "$(cygpath -w "$PWD/launcher")" \
@@ -40,6 +42,7 @@ out/pyenv/Scripts/python.exe -m PyInstaller --noconfirm --clean --log-level WARN
 
 # The package is assembled in a fresh staging folder and zipped from there; dist/uncharted-windows
 # (a playable copy that may hold saves and settings) is only refreshed afterwards.
+echo "::notice title=package-stage::Stage launcher and native executables"
 dest=out/stage/uncharted-windows
 rm -rf -- out/stage
 mkdir -p "$dest/bin" "$dest/launcher" "$dest/scripts"
@@ -63,16 +66,21 @@ for exe in bb-probe.exe bb-gpu-capabilities.exe; do
     fi
 done
 # Every DLL the executables load from the CLANG64 tree (SDL3, FFmpeg, Vulkan loader, ...).
+echo "::notice title=package-stage::Inspect native runtime DLL dependencies with ldd"
 ldd "$dest/bin/bb-probe.exe" "$dest/bin/bb-gpu-capabilities.exe" |
     awk '/\/clang64\/bin\// {print $3}' | sort -u | while read -r dll; do
         cp -u "$dll" "$dest/bin/"
     done
+echo "::notice title=package-stage::Copy scripts, assets, optional runtimes and licenses"
 # Only what run.py runs to prepare a game (Bloodborne's patch and mod tools stay out).
-cp scripts/prepare.py scripts/link_modules.py scripts/link_libc.py scripts/content_profile.py "$dest/scripts/"
+cp scripts/prepare.py scripts/link_modules.py scripts/link_libc.py scripts/content_profile.py scripts/trophies.py "$dest/scripts/"
 cp run.py LICENSE "$dest/"
 cp packaging/windows/README-Uncharted.txt "$dest/README.txt"
 mkdir -p "$dest/licenses"
 cp packaging/windows/licenses/*.txt "$dest/licenses/" 2>/dev/null || true
+for license in out/pyenv/Lib/site-packages/tkinterdnd2-*.dist-info/licenses/LICENSE; do
+    [[ -f $license ]] && cp "$license" "$dest/licenses/tkinterdnd2-LICENSE.txt"
+done
 # FSR 4 (the v07 INT8 model) when its assets are in fsr4_shaders/ (tools/fetch_fsr4_assets.sh).
 if [[ -d fsr4_shaders ]]; then cp -r fsr4_shaders "$dest/"; fi
 # DLSS and DLSS Frame Generation (NVIDIA RTX): the MSVC-built bridge and NVIDIA's runtimes, next
@@ -84,6 +92,14 @@ if [[ -f out/bbport_dlss.dll && -f out/nvngx_dlss.dll ]]; then
     cp gpu/dlss_bridge/LICENSE.txt "$dest/licenses/bbport_dlss-LICENSE.txt"
 else
     echo "DLSS bridge not built (packaging/windows/build_dlss.sh): no DLSS in this package" >&2
+fi
+# Intel XeSS (any GPU): Intel's libxess.dll next to bb-probe.exe (packaging/windows/fetch_xess.sh).
+# Without it the XeSS option stays hidden.
+if [[ -f out/libxess.dll && -f out/Intel-XeSS-LICENSE.txt ]]; then
+    cp out/libxess.dll "$dest/bin/"
+    cp out/Intel-XeSS-LICENSE.txt out/Intel-XeSS-third-party-programs.txt "$dest/licenses/"
+else
+    echo "XeSS not fetched (packaging/windows/fetch_xess.sh): no XeSS in this package" >&2
 fi
 for license in gpu/third_party/wepoll/LICENSE:wepoll gpu/third_party/httplib/LICENSE:cpp-httplib; do
     if [[ -f ${license%%:*} ]]; then cp "${license%%:*}" "$dest/licenses/${license##*:}-LICENSE.txt"; fi
@@ -99,13 +115,21 @@ for package in protobuf abseil-cpp openssl miniupnpc zlib; do
     done
 done
 find "$dest" -name __pycache__ -prune -exec rm -r {} +
+# Provenance and per-file hashes travel inside the portable package.
+echo "::notice title=package-stage::Validate AMD64 PE files and write provenance"
+out/pyenv/Scripts/python.exe tools/write_package_metadata.py "$dest"
 mkdir -p dist
 rm -f dist/uncharted-windows.zip
-(cd out/stage && powershell -NoProfile -Command \
-    "Compress-Archive -Path uncharted-windows -DestinationPath ../../dist/uncharted-windows.zip")
+# Not Compress-Archive, which writes backslashes that Linux tools keep in the file names (#246).
+echo "::notice title=package-stage::Compress the portable ZIP"
+(cd out/stage && ../pyenv/Scripts/python.exe -c "
+import pathlib, zipfile
+with zipfile.ZipFile('../../dist/uncharted-windows.zip', 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+    for p in sorted(pathlib.Path('uncharted-windows').rglob('*')): z.write(p)")
 
 # Refresh dist/uncharted-windows, keeping what players create there (saves, settings), and only
 # while nothing runs from it: deleting a running launcher's files breaks it.
+echo "::notice title=package-stage::Refresh the local playable directory"
 play=dist/uncharted-windows
 running=$(powershell -NoProfile -Command \
     "@(Get-Process | Where-Object { \$_.Path -like '$(cygpath -w "$PWD/$play")\\*' }).Count" | tr -d '\r')

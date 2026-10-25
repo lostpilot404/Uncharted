@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""Record exact Windows package provenance and PE architecture; no game-data access."""
+import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import struct
+import subprocess
+import sys
+import tempfile
+
+BASE = '31198fcf945016cc35c23931c33cb440c4895461'
+UPDATES = ['ac2bfbc1602623745d8b291a8ced639d6ede6369',
+           '754ed2ab4f1fdd21250c8785d4d4f49517d31292']
+
+
+def progress(message):
+    print(f'::notice title=package-metadata::{message}', flush=True)
+
+
+def command(*args, env=None):
+    progress('Run: ' + ' '.join(args))
+    p = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                       timeout=60, env=env)
+    progress(f'Exit {p.returncode}: ' + ' '.join(args))
+    if p.stderr:
+        print(p.stderr, file=sys.stderr, end='', flush=True)
+    return {'command': list(args), 'exit_code': p.returncode, 'output': p.stdout.strip(),
+            'stderr': p.stderr.strip()}
+
+
+def cmake_build_info(cache_path=Path('out/gpu/CMakeCache.txt')):
+    """Use the CMake that actually configured the build, not another PATH executable."""
+    entries = {}
+    for line in Path(cache_path).read_text(encoding='utf-8').splitlines():
+        if line and not line.startswith(('#', '//')) and '=' in line:
+            key, value = line.split('=', 1)
+            entries[key.split(':', 1)[0]] = value
+    version = [entries.get(f'CMAKE_CACHE_{part}_VERSION', '')
+               for part in ('MAJOR', 'MINOR', 'PATCH')]
+    if not all(part.isdecimal() for part in version) or not entries.get('CMAKE_COMMAND'):
+        raise ValueError(f'missing CMake build provenance in {cache_path}')
+    return {'source': str(cache_path), 'version': '.'.join(version),
+            'executable': entries['CMAKE_COMMAND'],
+            'generator': entries.get('CMAKE_GENERATOR'),
+            'c_compiler': entries.get('CMAKE_C_COMPILER'),
+            'cxx_compiler': entries.get('CMAKE_CXX_COMPILER')}
+
+
+def patched_submodule_status(path, patches):
+    """Compare with the exact tracked build patches using a private, temporary index.
+
+    Neither the real index nor the source worktree is modified. This verifies the
+    same base+patch inputs build.sh uses, rather than allowing arbitrary dirt.
+    """
+    with tempfile.TemporaryDirectory(prefix='uncharted-source-index-') as temp:
+        env = dict(os.environ, GIT_INDEX_FILE=str(Path(temp) / 'index'))
+        def required(*args):
+            result = command('git', '-C', path, *args, env=env)
+            if result['exit_code'] != 0:
+                raise ValueError(f'could not verify expected patched source: {result}')
+            return result
+        required('read-tree', 'HEAD')
+        patch_info = []
+        for patch in patches:
+            required('apply', '--cached', str(patch.resolve()))
+            patch_info.append({'path': patch.as_posix(), 'sha256': digest(patch)})
+        tree = required('write-tree')['output']
+        verification = required('diff', '--no-ext-diff', '--exit-code',
+                                '--ignore-submodules=dirty', '--name-status', '--')
+        if verification['output']:
+            raise ValueError(f'unexpected patched worktree differences: {verification}')
+        return {'expected_patches': patch_info, 'expected_tree': tree,
+                'verification': verification}
+
+
+def source_status(submodules):
+    # Avoid recursive `git status` (observed hanging on the native runner).
+    # `dirty` skips each submodule's worktree scan, NOT its recorded HEAD; check
+    # every submodule's tracked worktree explicitly in a separate bounded call.
+    flags = ('diff', '--no-ext-diff', '--exit-code', '--ignore-submodules=dirty',
+             '--name-status', 'HEAD', '--')
+    def clean(*prefix):
+        result = command('git', *prefix, *flags)
+        if result['exit_code'] != 0 or result['output']:
+            raise ValueError(f'tracked source is dirty or could not be verified: {result}')
+        return result
+    result = {'root': clean(), 'submodules': [],
+              'scope': 'Tracked files and recursive submodule HEAD/worktree changes; untracked build products excluded'}
+    if submodules['exit_code'] != 0:
+        raise ValueError('could not enumerate submodule source state')
+    for line in submodules['output'].splitlines():
+        line = line.lstrip()
+        if (len(line) < 42 or line[40] != ' ' or
+                any(c not in '0123456789abcdef' for c in line[:40])):
+            raise ValueError(f'uninitialized, changed or invalid submodule: {line}')
+        path = line[41:].rsplit(' (', 1)[0]
+        if path == 'gpu/third_party/fsr-vulkan':
+            patches = sorted(Path('gpu/patches/fsr-vulkan').glob('*.patch'))
+            if not patches:
+                raise ValueError('expected build.sh FSR patches are missing')
+            verification = patched_submodule_status(path, patches)
+        else:
+            verification = clean('-C', path)
+        result['submodules'].append({'path': path, 'verification': verification})
+    return result
+
+
+def digest(path):
+    h = hashlib.sha256()
+    with path.open('rb') as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def pe_machine(path):
+    with path.open('rb') as f:
+        if f.read(2) != b'MZ':
+            raise ValueError(f'not a PE executable: {path}')
+        f.seek(0x3c)
+        offset = struct.unpack('<I', f.read(4))[0]
+        f.seek(offset)
+        if f.read(4) != b'PE\0\0':
+            raise ValueError(f'bad PE signature: {path}')
+        machine = struct.unpack('<H', f.read(2))[0]
+        if machine != 0x8664:
+            raise ValueError(f'expected AMD64, got {machine:#x}: {path}')
+        return 'AMD64 (0x8664)'
+
+
+def main(dest):
+    dest = Path(dest)
+    progress('Read exact source HEAD')
+    sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True, timeout=60).strip()
+    for ancestor in [BASE, *UPDATES]:
+        progress('Verify ancestor: ' + ancestor)
+        subprocess.run(['git', 'merge-base', '--is-ancestor', ancestor, sha], check=True, timeout=60)
+    progress('Hash staged files and inspect PE architecture')
+    files = []
+    for path in sorted(dest.rglob('*')):
+        if path.is_file() and path.name not in ('BUILD-METADATA.json', 'SHA256SUMS.txt'):
+            item = {'path': path.relative_to(dest).as_posix(), 'bytes': path.stat().st_size,
+                    'sha256': digest(path)}
+            if path.suffix.lower() in ('.exe', '.dll', '.pyd'):
+                item['pe_machine'] = pe_machine(path)
+            files.append(item)
+            if len(files) % 50 == 0:
+                progress(f'Hashed {len(files)} files; latest: {item["path"]}')
+    progress(f'File validation complete: {len(files)} files')
+    submodules = command('git', 'submodule', 'status', '--recursive')
+    result = {
+        'source_sha': sha, 'base_sha': BASE, 'upstream_release_commits': UPDATES,
+        'build_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        'msvc_environment': {key: os.environ.get(key) for key in (
+            'VCToolsVersion', 'VisualStudioVersion', 'VSCMD_VER',
+            'VSCMD_ARG_TGT_ARCH', 'WindowsSDKVersion', 'WindowsSdkDir')},
+        'target': 'Windows AMD64', 'configuration': 'RelWithDebInfo; BB_PGO=off; BB_LTO=OFF',
+        'packaging': 'PyInstaller one-directory; launcher EXE is NOT standalone',
+        'run_url': f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}",
+        'toolchains': [command('clang', '--version'), cmake_build_info(),
+                       command('ninja', '--version'), command('pacman', '-Q'),
+                       command('out/pyenv/Scripts/python.exe', '-m', 'pip', 'freeze')],
+        'nvidia_sdk': command('git', '-C', 'out/dlss-sdk', 'rev-parse', 'HEAD'),
+        'submodules': submodules,
+        'source_status_after_build': source_status(submodules),
+        'validation': {'manual_gameplay': 'NOT_PERFORMED',
+                       'gameplay': 'BLOCKED: proprietary game dump and compatible GPU not supplied',
+                       'native_gui_launch': 'See separate native-launch-results.json artifact',
+                       'localization': 'Strict coverage and format-field checks: see exact-source Runtime CI results'},
+        'files': files,
+    }
+    metadata = dest / 'BUILD-METADATA.json'
+    metadata.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+    checks = files + [{'path': metadata.name, 'sha256': digest(metadata)}]
+    (dest / 'SHA256SUMS.txt').write_text(''.join(f"{f['sha256']}  {f['path']}\n" for f in checks), encoding='utf-8')
+    print(f'package provenance: source={sha} files={len(files)} AMD64_PE_files={sum("pe_machine" in f for f in files)}')
+
+
+if __name__ == '__main__':
+    main(sys.argv[1])

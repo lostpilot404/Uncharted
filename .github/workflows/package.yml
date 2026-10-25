@@ -24,9 +24,17 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
+      # Checkout and MSYS2 Git must agree on source bytes; otherwise the native
+      # checkout's automatic CRLF conversion appears as source edits to MSYS2.
+      - name: Preserve source line endings before checkout
+        shell: pwsh
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: msys2/setup-msys2@v2
         id: msys2
@@ -61,16 +69,19 @@ jobs:
             mingw-w64-clang-x86_64-nlohmann-json
 
       - name: Build the Windows runtime (build.sh, MSYS2 CLANG64)
+        id: runtime-build
         shell: msys2 {0}
         run: |
           git config --global --add safe.directory '*'
+          mkdir -p out/package-logs
           if ! out=$(bash build.sh 2>&1); then
             printf '%s\n' "$out" | tail -40 | while IFS= read -r line; do
               echo "::error title=build.sh::${line}"
             done
             exit 1
           fi
-          printf '%s\n' "$out" | tail -5
+          printf '%s\n' "$out" | tee out/package-logs/build.log
+          ninja -C out/gpu -t commands > out/package-logs/build-commands.log
 
       - uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -104,27 +115,38 @@ jobs:
             test -f "$file" || { echo "::error title=dlss::missing $file"; exit 1; }
           done
 
+      - name: Fetch the pinned optional XeSS runtime
+        shell: msys2 {0}
+        run: bash packaging/windows/fetch_xess.sh
+
       - uses: actions/setup-python@v5
         id: py
         with:
           python-version: '3.12'
 
       - name: Assemble the package (packaging/windows/package.sh)
+        timeout-minutes: 20
         shell: msys2 {0}
         env:
           WINPYTHON_WINDOWS: ${{ steps.py.outputs.python-path }}
         run: |
-          set -e
+          set -euo pipefail
+          # Stream and persist diagnostics even if assembly hangs or is interrupted.
           # package.sh needs a python.org Python (PyInstaller), not MSYS2's.
           export WINPYTHON=$(cygpath -u "$WINPYTHON_WINDOWS")
           "$WINPYTHON" --version
-          if ! out=$(bash packaging/windows/package.sh 2>&1); then
-            printf '%s\n' "$out" | tail -40 | while IFS= read -r line; do
-              echo "::error title=package.sh::${line}"
-            done
+          if bash packaging/windows/package.sh 2>&1 | tee out/package-logs/package.log; then
+            :
+          else
+            # One escaped annotation preserves the final exception instead of exhausting
+            # GitHub's ten-error annotation limit with earlier progress messages.
+            message=$(tail -40 out/package-logs/package.log)
+            message=${message//%/%25}
+            message=${message//$'\r'/%0D}
+            message=${message//$'\n'/%0A}
+            echo "::error title=package.sh::$message"
             exit 1
           fi
-          printf '%s\n' "$out" | tail -6
 
       - name: Verify the package contents and checksum
         shell: msys2 {0}
@@ -141,11 +163,44 @@ jobs:
           echo "::notice title=package-size::$(stat -c %s "$zip") bytes"
           echo "::notice title=package-commit::$(git rev-parse HEAD)"
 
-      - uses: actions/upload-artifact@v4
+      - name: Native clean-extraction application launch (not gameplay)
+        shell: pwsh
+        run: ./tools/smoke_windows_package.ps1
+
+      - name: Publish the built package even if runtime validation fails
+        if: ${{ always() && hashFiles('dist/uncharted-windows.zip') != '' }}
+        uses: actions/upload-artifact@v4
         with:
           name: uncharted-windows-package
           path: |
             dist/uncharted-windows.zip
             dist/uncharted-windows.zip.sha256
+            dist/uncharted-windows/BUILD-METADATA.json
+            dist/uncharted-windows/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 90
+
+      - name: Preserve build and launch evidence (including failed runs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-package-evidence
+          path: |
+            out/package-logs/
+            out/gpu-build.log
+            out/gpu/CMakeCache.txt
+            out/package-launch/native-launch-results.json
+            out/package-launch/*.log
+            out/package-launch/diagnostics-export.zip
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Surface compiler failures through the checks API
+        if: ${{ failure() && steps.runtime-build.conclusion == 'failure' }}
+        shell: msys2 {0}
+        run: |
+          if [[ -f out/gpu-build.log ]]; then
+            grep -E 'error:|undefined reference' out/gpu-build.log | head -8 | cut -c1-350 | while IFS= read -r line; do
+              echo "::error title=package-compile::$line"
+            done
+          fi

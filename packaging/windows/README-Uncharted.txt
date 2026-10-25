@@ -24,7 +24,7 @@ Starting
 - Display page -> Frame rate: 60 FPS as on PS4, or 120 FPS. Gameplay keeps its normal speed
   and the cutscene videos still play at 60. Higher rates are experimental. Above your
   display's refresh rate use the Mailbox or Immediate presentation.
-- Display page -> Anti-aliasing: TAA, AMD FSR 3.1, AMD FSR 4 or NVIDIA DLSS (DLAA) smooth the
+- Display page -> Anti-aliasing: TAA, AMD FSR 3.1, AMD FSR 4, NVIDIA DLSS (DLAA) or Intel XeSS smooth the
   games' 1920x1080 picture with their own motion vectors, before their post-processing.
   DLSS needs a GeForce RTX. Upscaling to a larger window or screen stays with FSR 1.
 - Display page -> Frame generation: AMD FSR 3 Frame Generation (any GPU, 2x) or NVIDIA DLSS
@@ -36,6 +36,10 @@ Starting
   C Circle, F Square, E Triangle, Q/G L1/R1, Left Shift/V L3/R3, arrows and wheel d-pad,
   Escape/Enter Options, Tab touchpad. The cursor stays in the game window; hold Left Alt to
   free it. Insert opens the in-game settings menu. Bindings are saved in input.ini.
+- Trophies: the three games' trophy lists are read from sce_sys\trophy\trophy01-03.trp in the game
+  folder. A trophy the game awards shows as a notice at the top of the screen and on the launcher's
+  Trophies page (BB_TROPHY_POPUP=0 in Advanced -> Environment hides the notice). Earned trophies
+  are kept in user\trophy\ with the saves, one list per game.
 
 Data
 - Saves and shader caches: user\ next to Uncharted.exe (the launcher can pick another folder).
@@ -75,3 +79,37 @@ Known problems
   shadPS4). Not fixed yet.
 
 Port by SuperMedo.
+
+Mission 7.14 review-candidate notes
+- Extract the entire ZIP to a new, writable folder. Uncharted.exe is the real launcher,
+  NOT a standalone executable: keep _internal, bin, scripts, launcher and licenses beside it.
+- Install the Microsoft Visual C++ 2015-2022 Redistributable (x64), particularly for XeSS,
+  and a current GPU driver. FSR 4 requires separately supplied assets; use Off/TAA/FSR 3.1
+  if they are absent. No game dump is included or downloadable from this package.
+- BUILD-METADATA.json identifies the exact source, upstream commits, tools and file hashes.
+  SHA256SUMS.txt covers the package files. CI launch evidence is a separate artifact.
+- This is a draft integration candidate, not a production-safety certification. CRIT-06
+  sibling unmap gaps, intentional invalidation, stale async pointers and mixed-protection
+  widening remain unresolved. The placeholder-leaf experiment is NOT used by this runtime.
+- Launcher text coverage is checked for all six supported non-English languages.
+  English fallback remains available for unknown text; human linguistic review is still useful.
+- Disable 'Look for a new version' on Advanced before testing. Do not install an upstream
+  auto-update over this review build: it would replace the fork's unmerged work.
+- Test with a COPY of your saves. Start at 1080p, 60 FPS, AA and frame generation off.
+  Choose the Game folder, verify each available title, open Display/Controls, save settings,
+  then PLAY. Record cutscene/menu/gameplay behavior, controller input and clean shutdown.
+  GPU and gameplay checks require your decrypted game data and cannot be established by CI.
+- If launch fails, preserve user\last_run.log, the Log page output, BUILD-METADATA.json and
+  the exact ZIP checksum. Missing DLL errors can indicate incomplete extraction or drivers.
+
+LOCAL DIAGNOSTICS (no telemetry uploads)
+  Log -> Export diagnostics previews a bounded, sanitized local ZIP. Inspect every
+  member, then Save ZIP to a NEW filename or Cancel. Redaction is best effort:
+  unknown private runtime text may remain. No files are uploaded automatically.
+  Log -> Open logs folder opens %APPDATA%/uncharted-launcher/diagnostics.
+  Report a problem asks before opening GitHub and never attaches your logs.
+  Current/previous runtime and launcher history are size-limited. Native dumps,
+  game contents, saves and full settings are excluded. Driver version may be unavailable.
+  Explicit CLI alternative: Uncharted.exe --export-diagnostics C:\Reports\new-report.zip
+  Inspect the ZIP yourself before sharing. Directory must exist; no overwrite.
+  Better diagnostics do not fix the known CRIT-06 memory-safety limitations.

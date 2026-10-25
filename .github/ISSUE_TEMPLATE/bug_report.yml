@@ -1,0 +1,41 @@
+name: Windows application problem
+description: Report a reproducible launcher or runtime problem. Never attach game data or dumps publicly.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Diagnostics are local only. Use Log → Export diagnostics, inspect EVERY file, and share only what you agree to make public.
+        Never attach saves, decrypted games, keys, full settings or native memory dumps. Sanitization is best effort.
+        A final log error is evidence, not proof of the cause. Keep CRIT-06 memory safety separate from diagnostics improvements.
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction steps and frequency
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Exact build/source SHA and game identifier (u1, u2 or u3)
+      description: See diagnostics.json or BUILD-METADATA.json. Do not paste game-library paths.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Windows build, GPU/driver, relevant settings and exit code
+  - type: input
+    id: regression
+    attributes:
+      label: Last working build and first broken build, if known
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Reviewed diagnostic evidence
+      description: Attach only inspected files you agree to share publicly. No upload is automatic.
